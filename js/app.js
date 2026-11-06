@@ -1,0 +1,779 @@
+/* ==========================================================================
+   Escadre — l'APPLICATION (écrans, boutons, déroulé de la partie)
+   --------------------------------------------------------------------------
+   Idée générale :
+   - Toute la partie est rangée dans un seul objet « P » (la Partie).
+   - Chaque fois que P change : on l'enregistre (sauver) puis on redessine
+     l'écran (afficher). Si le téléphone recharge la page, on reprend P.
+   - Chaque joueur garde SA flotte secrète. Quand l'ami tire, c'est MON
+     téléphone qui calcule « à l'eau / touché / coulé » et lui répond.
+   ========================================================================== */
+(function () {
+  "use strict";
+  const R = window.Regles;
+  const CLE_PARTIE = "escadre.partie.v1";
+  const CLE_PROFIL = "escadre.profil.v1";
+  const DUREE_REPRISE = 3 * 24 * 3600 * 1000; // une partie se reprend jusqu'à 3 jours
+
+  const $ = (s) => document.querySelector(s);
+  const ecrans = { accueil: $("#ecran-accueil"), jeu: $("#ecran-jeu") };
+
+  /* ------------------------------------------------------------------
+     Mémoire du téléphone (localStorage)
+     ------------------------------------------------------------------ */
+  // En mode test (?local=1), chaque onglet a sa propre mémoire, comme deux vrais téléphones.
+  const memoire = (() => {
+    try { return new URLSearchParams(location.search).has("local") ? sessionStorage : localStorage; }
+    catch (e) { return null; }
+  })();
+  function lire(cle) { try { return JSON.parse(memoire.getItem(cle)); } catch (e) { return null; } }
+  function ecrire(cle, v) { try { memoire.setItem(cle, JSON.stringify(v)); } catch (e) {} }
+  function effacer(cle) { try { memoire.removeItem(cle); } catch (e) {} }
+
+  function aleatoire(n) {
+    const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // sans O/0 ni I/1 (on les confond)
+    const tab = new Uint32Array(n);
+    crypto.getRandomValues(tab);
+    return Array.from(tab, (v) => alphabet[v % alphabet.length]).join("");
+  }
+
+  const profil = Object.assign({ nom: "", son: true, victoires: 0, defaites: 0, jeton: aleatoire(16) }, lire(CLE_PROFIL) || {});
+  ecrire(CLE_PROFIL, profil);
+  Sons.regler(profil.son);
+
+  let P = lire(CLE_PARTIE);
+  if (P && Date.now() - (P.maj || 0) > DUREE_REPRISE) { P = null; effacer(CLE_PARTIE); }
+
+  let liaison = null;
+  const ui = { selection: null, horizontal: true, visee: null, reseau: "connexion", detailReseau: "", accueil: false };
+
+  function sauver() {
+    if (!P) return;
+    P.maj = Date.now();
+    ecrire(CLE_PARTIE, P);
+  }
+  function sauverProfil() { ecrire(CLE_PROFIL, profil); }
+
+  /* ------------------------------------------------------------------
+     Créer / rejoindre / quitter
+     ------------------------------------------------------------------ */
+  function champsDePartie(partieId, premier, regles) {
+    return {
+      partieId, premier, regles,
+      phase: "placement",       // placement → jeu → fin
+      navires: [], pret: false, adversairePret: false,
+      tirsEnvoyes: [],          // mes tirs : {x, y, res, navire}
+      tirsRecus: [],            // ses tirs sur moi : {x, y, res, navire, cases, fin}
+      coulesAdverses: [],       // navires ennemis coulés : {id, cases}
+      flotteAdverse: null,      // révélée à la fin
+      gagnant: null, compte: false,
+      veuxRevanche: false, ilVeutRevanche: false,
+    };
+  }
+
+  function nomJoueur() { return ($("#champ-nom").value.trim() || "Capitaine").slice(0, 16); }
+
+  // Si une autre partie était en cours, on prévient l'ami qu'on la quitte.
+  function abandonner() {
+    const ancienne = liaison;
+    liaison = null;
+    if (ancienne) { ancienne.envoyer({ t: "quitte" }); setTimeout(() => ancienne.fermer(), 300); }
+  }
+
+  function creerPartie() {
+    abandonner();
+    profil.nom = nomJoueur(); sauverProfil();
+    P = Object.assign(
+      { role: "hote", code: aleatoire(5), jetonInvite: null, nomAdverse: "", adversaireParti: false },
+      champsDePartie(aleatoire(8), Math.random() < 0.5 ? "hote" : "invite", { colles: $("#opt-colles").checked })
+    );
+    sauver();
+    lancer();
+  }
+
+  function rejoindrePartie(code) {
+    code = (code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (code.length !== 5) { toast("Le code fait 5 caractères."); return; }
+    abandonner();
+    profil.nom = nomJoueur(); sauverProfil();
+    P = Object.assign({ role: "invite", code, nomAdverse: "", adversaireParti: false }, champsDePartie(null, null, null));
+    P.phase = "arrivee"; // on attend que l'hôte nous accueille
+    sauver();
+    lancer();
+  }
+
+  function lancer() {
+    if (liaison) liaison.fermer();
+    ui.selection = null; ui.visee = null; ui.accueil = false;
+    liaison = Reseau.Liaison({
+      role: P.role,
+      code: P.code,
+      bonjour: () => ({ t: "bonjour", jeton: profil.jeton, nom: profil.nom, partieId: P.partieId }),
+      accepter: (msg) => {
+        if (typeof msg.jeton !== "string") return false;
+        return !P.jetonInvite || P.jetonInvite === msg.jeton; // seul le même ami peut revenir
+      },
+      surMessage: recevoir,
+      surEtat: (etat, detail) => { ui.reseau = etat; ui.detailReseau = detail || ""; afficher(); },
+    });
+    if (P.role === "invite" && history.replaceState) history.replaceState(null, "", location.pathname + (estLocal() ? "?local=1" : ""));
+    afficher();
+  }
+
+  function quitter() {
+    abandonner();
+    P = null;
+    effacer(CLE_PARTIE);
+    fermerFenetres();
+    afficher();
+  }
+
+  /* ------------------------------------------------------------------
+     Messages envoyés à l'ami
+     ------------------------------------------------------------------ */
+  function envoyer(msg) { if (liaison) liaison.envoyer(msg); }
+
+  function envoyerEtat() {
+    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom });
+  }
+
+  function envoyerFlotte() {
+    envoyer({ t: "flotte", partieId: P.partieId, navires: P.navires });
+  }
+
+  /* ------------------------------------------------------------------
+     Messages reçus de l'ami (tout est vérifié : on ne fait pas confiance)
+     ------------------------------------------------------------------ */
+  const entier = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+  const texte = (v) => (typeof v === "string" ? v.slice(0, 16) : "");
+
+  function recevoir(msg) {
+    if (!P) return;
+    switch (msg.t) {
+      case "bonjour": // (hôte) l'ami vient d'arriver ou revient
+        P.jetonInvite = msg.jeton;
+        if (!P.nomAdverse) toast(texte(msg.nom) + " a rejoint la partie !");
+        P.nomAdverse = texte(msg.nom) || "Ton ami";
+        P.adversaireParti = false;
+        envoyer({ t: "bienvenue", partieId: P.partieId, premier: P.premier, regles: P.regles, nom: profil.nom });
+        envoyerEtat();
+        break;
+
+      case "bienvenue": // (invité) l'hôte nous donne les infos de la partie
+        P.nomAdverse = texte(msg.nom) || "Ton ami";
+        P.adversaireParti = false;
+        if (msg.partieId !== P.partieId) {
+          Object.assign(P, champsDePartie(String(msg.partieId), msg.premier === "hote" ? "hote" : "invite", { colles: !(msg.regles && msg.regles.colles === false) }));
+        }
+        envoyerEtat();
+        break;
+
+      case "nouvelle": // (invité) revanche lancée par l'hôte
+        if (P.role !== "invite") return;
+        Object.assign(P, champsDePartie(String(msg.partieId), msg.premier === "hote" ? "hote" : "invite", { colles: !(msg.regles && msg.regles.colles === false) }));
+        fermerFenetres();
+        toast("Revanche ! Place ta flotte.");
+        envoyerEtat();
+        break;
+
+      case "etat":
+        if (msg.partieId !== P.partieId) return;
+        if (msg.nom) P.nomAdverse = texte(msg.nom);
+        if (msg.pret && !P.adversairePret && P.phase === "placement") toast(P.nomAdverse + " est prêt !");
+        P.adversairePret = !!msg.pret;
+        verifierDebut();
+        // Rattrapage après une coupure : on renvoie ce qui a pu se perdre
+        renvoyerTirEnAttente();
+        if (P.phase === "fin") envoyerFlotte();
+        if (P.veuxRevanche) envoyer({ t: "revanche", partieId: P.partieId });
+        break;
+
+      case "tir": recevoirTir(msg); break;
+      case "resultat": recevoirResultat(msg); break;
+
+      case "flotte":
+        if (msg.partieId !== P.partieId || P.phase !== "fin" || P.flotteAdverse) return;
+        if (Array.isArray(msg.navires) && R.flotteValide(msg.navires, P.regles)) {
+          P.flotteAdverse = msg.navires.map((n) => ({ id: n.id, x: n.x, y: n.y, h: !!n.h }));
+        } else {
+          P.flotteAdverse = [];
+        }
+        break;
+
+      case "revanche":
+        if (msg.partieId !== P.partieId) return;
+        if (!P.ilVeutRevanche) toast(P.nomAdverse + " veut une revanche !");
+        P.ilVeutRevanche = true;
+        if (P.role === "hote" && P.veuxRevanche) lancerRevanche();
+        break;
+
+      case "emoji":
+        if (["😂", "😱", "🔥", "👏", "😤"].includes(msg.e)) bulle(msg.e);
+        return;
+
+      case "quitte":
+        P.adversaireParti = true;
+        toast(P.nomAdverse + " a quitté la partie.");
+        break;
+
+      case "refus":
+        toast(typeof msg.raison === "string" ? msg.raison : "Partie refusée.");
+        P = null; effacer(CLE_PARTIE);
+        if (liaison) liaison.fermer();
+        liaison = null;
+        break;
+
+      default:
+        return;
+    }
+    sauver();
+    afficher();
+  }
+
+  /* ------------------------------------------------------------------
+     Déroulé de la bataille
+     ------------------------------------------------------------------ */
+  const jeSuisPremier = () => P.premier === P.role;
+  const monTour = () => P.phase === "jeu" && R.estMonTour(jeSuisPremier(), P.tirsEnvoyes.length, P.tirsRecus.length);
+  const sonTour = () => P.phase === "jeu" && R.estMonTour(!jeSuisPremier(), P.tirsRecus.length, P.tirsEnvoyes.length);
+
+  function verifierDebut() {
+    if (P.phase === "placement" && P.pret && P.adversairePret) {
+      P.phase = "jeu";
+      sauver();
+      setTimeout(() => {
+        annonce(monTour() ? "À toi !" : "C'est parti", monTour() ? "Le sort t'a désigné pour tirer en premier" : P.nomAdverse + " tire en premier", "");
+        if (monTour()) Sons.tonTour();
+      }, 150);
+    }
+  }
+
+  function tirer(x, y) {
+    if (!monTour()) return;
+    if (P.tirsEnvoyes.some((t) => t.x === x && t.y === y)) return;
+    const n = P.tirsEnvoyes.length;
+    P.tirsEnvoyes.push({ x, y, res: null });
+    ui.visee = null;
+    Sons.tir();
+    envoyer({ t: "tir", partieId: P.partieId, n, x, y });
+    sauver();
+    afficher();
+  }
+
+  function renvoyerTirEnAttente() {
+    const n = P.tirsEnvoyes.length - 1;
+    const t = P.tirsEnvoyes[n];
+    if (t && t.res === null) envoyer({ t: "tir", partieId: P.partieId, n, x: t.x, y: t.y });
+  }
+
+  function recevoirTir(msg) {
+    if (msg.partieId !== P.partieId || !entier(msg.n, 0, 99) || !entier(msg.x, 0, 9) || !entier(msg.y, 0, 9)) return;
+
+    // Tir déjà traité (message renvoyé après une coupure) : on renvoie la même réponse.
+    if (msg.n < P.tirsRecus.length) {
+      const deja = P.tirsRecus[msg.n];
+      envoyer(Object.assign({ t: "resultat", partieId: P.partieId, n: msg.n }, deja));
+      return;
+    }
+    if (msg.n !== P.tirsRecus.length || !sonTour()) return;                 // pas son tour : refusé
+    if (P.tirsRecus.some((t) => t.x === msg.x && t.y === msg.y)) return;    // case déjà visée
+
+    const r = R.resoudreTir(P.navires, P.tirsRecus, msg.x, msg.y);
+    const enregistre = Object.assign({ x: msg.x, y: msg.y }, r);
+    P.tirsRecus.push(enregistre);
+    envoyer(Object.assign({ t: "resultat", partieId: P.partieId, n: msg.n }, enregistre));
+
+    const lieu = R.nomCase(msg.x, msg.y);
+    ui.impactMoi = msg.n;
+    if (r.fin) {
+      terminer("lui");
+    } else if (r.res === "coule") {
+      Sons.coule(); annonce("Coulé…", P.nomAdverse + " a coulé ton " + R.infoNavire(r.navire).nom.toLowerCase(), "coule");
+    } else if (r.res === "touche") {
+      Sons.touche(); annonce("Touché…", P.nomAdverse + " t'a touché en " + lieu, "touche");
+    } else {
+      Sons.eau(); toast(P.nomAdverse + " tire en " + lieu + " : à l'eau. À toi !");
+      setTimeout(Sons.tonTour, 500);
+    }
+    sauver(); afficher();
+    // (la fonction appelante « recevoir » ne sauve pas ici car on a déjà sauvé)
+  }
+
+  function recevoirResultat(msg) {
+    if (msg.partieId !== P.partieId || !entier(msg.n, 0, 99)) return;
+    const t = P.tirsEnvoyes[msg.n];
+    if (!t || t.res !== null || t.x !== msg.x || t.y !== msg.y) return;     // déjà reçu, ou incohérent
+    if (!["eau", "touche", "coule"].includes(msg.res)) return;
+
+    t.res = msg.res;
+    ui.impactAdverse = msg.n;
+    if (msg.res === "coule" && R.infoNavire(msg.navire) && Array.isArray(msg.cases)) {
+      t.navire = msg.navire;
+      const cases = msg.cases.filter((c) => c && entier(c.x, 0, 9) && entier(c.y, 0, 9)).map((c) => ({ x: c.x, y: c.y }));
+      if (!P.coulesAdverses.some((c) => c.id === msg.navire)) P.coulesAdverses.push({ id: msg.navire, cases });
+    }
+    if (msg.fin) {
+      terminer("moi");
+    } else if (msg.res === "coule") {
+      Sons.coule(); annonce("Coulé !", "Tu as coulé son " + R.infoNavire(msg.navire).nom.toLowerCase(), "coule");
+    } else if (msg.res === "touche") {
+      Sons.touche(); annonce("Touché !", R.nomCase(t.x, t.y), "touche");
+    } else {
+      Sons.eau(); annonce("À l'eau", R.nomCase(t.x, t.y), "eau");
+    }
+    sauver(); afficher();
+  }
+
+  function terminer(gagnant) {
+    if (P.phase === "fin") return;
+    P.phase = "fin";
+    P.gagnant = gagnant;
+    if (!P.compte) {
+      P.compte = true;
+      if (gagnant === "moi") profil.victoires++; else profil.defaites++;
+      sauverProfil();
+    }
+    envoyerFlotte();
+    sauver();
+    if (gagnant === "moi") { Sons.victoire(); annonce("Victoire !", "Toute la flotte ennemie est au fond", "coule"); }
+    else { Sons.defaite(); annonce("Défaite", P.nomAdverse + " a coulé toute ta flotte", "eau"); }
+    setTimeout(ouvrirFin, 1600);
+  }
+
+  function demanderRevanche() {
+    P.veuxRevanche = true;
+    envoyer({ t: "revanche", partieId: P.partieId });
+    if (P.role === "hote" && P.ilVeutRevanche) lancerRevanche();
+    sauver(); afficher();
+  }
+
+  function lancerRevanche() {
+    // Le joueur qui n'a pas commencé la dernière fois commence celle-ci.
+    const premier = P.premier === "hote" ? "invite" : "hote";
+    Object.assign(P, champsDePartie(aleatoire(8), premier, P.regles));
+    envoyer({ t: "nouvelle", partieId: P.partieId, premier, regles: P.regles });
+    envoyerEtat();
+    fermerFenetres();
+    toast("Revanche ! Place ta flotte.");
+    sauver(); afficher();
+  }
+
+  /* Vérification d'honnêteté : à la fin, on rejoue tous nos tirs sur la flotte
+     révélée de l'ami et on vérifie que ses réponses étaient exactes. */
+  function verifierHonnetete() {
+    if (!P.flotteAdverse) return "En attente de la flotte de " + P.nomAdverse + "…";
+    if (!P.flotteAdverse.length) return "⚠️ La flotte reçue n'est pas valide.";
+    const deja = [];
+    for (const t of P.tirsEnvoyes) {
+      if (t.res === null) continue;
+      const r = R.resoudreTir(P.flotteAdverse, deja, t.x, t.y);
+      deja.push({ x: t.x, y: t.y });
+      if (r.res !== t.res) return "⚠️ Certaines réponses ne correspondent pas à la flotte révélée.";
+    }
+    return "✅ Flotte de " + P.nomAdverse + " vérifiée : partie loyale.";
+  }
+
+  /* ------------------------------------------------------------------
+     Placement de la flotte
+     ------------------------------------------------------------------ */
+  function navireEn(x, y) {
+    return P.navires.find((n) => R.casesDe(n).some((c) => c.x === x && c.y === y));
+  }
+
+  function prochainNavireAPlacer() {
+    const f = R.FLOTTE.find((f) => !P.navires.some((n) => n.id === f.id));
+    return f ? f.id : null;
+  }
+
+  function toucherMaGrille(x, y) {
+    if (P.phase !== "placement" || P.pret) return;
+    const sous = navireEn(x, y);
+    if (sous && sous.id === ui.selection) { pivoter(); return; }       // 2e toucher = pivoter
+    if (sous) { ui.selection = sous.id; Sons.clic(); afficher(); return; } // toucher un navire = le prendre
+    if (!ui.selection) { ui.selection = prochainNavireAPlacer(); if (!ui.selection) return; }
+
+    const existant = P.navires.find((n) => n.id === ui.selection);
+    const candidat = R.recadrer({ id: ui.selection, x, y, h: existant ? existant.h : ui.horizontal });
+    const verdict = R.placementValide(P.navires, candidat, P.regles);
+    if (!verdict.ok) { refuser(verdict.raison); return; }
+    P.navires = P.navires.filter((n) => n.id !== candidat.id).concat([candidat]);
+    Sons.clic();
+    ui.selection = existant ? null : prochainNavireAPlacer();
+    sauver(); afficher();
+  }
+
+  function pivoter() {
+    const n = P.navires.find((v) => v.id === ui.selection);
+    if (!n) { ui.horizontal = !ui.horizontal; toast(ui.horizontal ? "Navires à l'horizontale" : "Navires à la verticale"); afficher(); return; }
+    const candidat = R.recadrer({ ...n, h: !n.h });
+    const verdict = R.placementValide(P.navires, candidat, P.regles);
+    if (!verdict.ok) { refuser("Pas la place de le tourner ici."); return; }
+    P.navires = P.navires.map((v) => (v.id === n.id ? candidat : v));
+    Sons.clic();
+    sauver(); afficher();
+  }
+
+  function placerAuHasard() {
+    P.navires = R.placementAleatoire(P.regles);
+    ui.selection = null;
+    Sons.clic();
+    sauver(); afficher();
+  }
+
+  function seDeclarerPret() {
+    if (!R.flotteValide(P.navires, P.regles)) { refuser("Place tes 5 navires d'abord."); return; }
+    P.pret = true;
+    ui.selection = null;
+    envoyerEtat();
+    verifierDebut();
+    sauver(); afficher();
+  }
+
+  function refuser(texteMsg) {
+    toast(texteMsg);
+    const g = $("#grille-moi");
+    g.classList.remove("secoue"); void g.offsetWidth; g.classList.add("secoue");
+    if (navigator.vibrate && profil.son) navigator.vibrate(80);
+  }
+
+  /* ------------------------------------------------------------------
+     Construction des grilles (une seule fois)
+     ------------------------------------------------------------------ */
+  function construireGrille(el, auToucher) {
+    el.innerHTML = "";
+    el.appendChild(document.createElement("span"));
+    for (let x = 0; x < R.TAILLE; x++) {
+      const s = document.createElement("span"); s.className = "repere"; s.textContent = R.LETTRES[x]; el.appendChild(s);
+    }
+    const cases = [];
+    for (let y = 0; y < R.TAILLE; y++) {
+      const s = document.createElement("span"); s.className = "repere"; s.textContent = y + 1; el.appendChild(s);
+      for (let x = 0; x < R.TAILLE; x++) {
+        const b = document.createElement("button");
+        b.className = "case"; b.type = "button";
+        b.setAttribute("aria-label", R.nomCase(x, y));
+        b.addEventListener("click", () => { Sons.debloquer(); auToucher(x, y); });
+        el.appendChild(b);
+        cases.push(b);
+      }
+    }
+    return (x, y) => cases[y * R.TAILLE + x];
+  }
+
+  const caseMoi = construireGrille($("#grille-moi"), toucherMaGrille);
+  const caseAdverse = construireGrille($("#grille-adverse"), (x, y) => {
+    if (!P || P.phase !== "jeu") return;
+    if (P.tirsEnvoyes.some((t) => t.x === x && t.y === y)) { toast("Tu as déjà tiré en " + R.nomCase(x, y) + "."); return; }
+    if (!monTour()) { toast("Patience, c'est au tour de " + P.nomAdverse + "."); return; }
+    if (ui.visee && ui.visee.x === x && ui.visee.y === y) { tirer(x, y); return; } // 2e toucher = feu
+    ui.visee = { x, y };
+    Sons.clic();
+    afficher();
+  });
+
+  /* ------------------------------------------------------------------
+     AFFICHAGE : redessine tout l'écran à partir de P
+     ------------------------------------------------------------------ */
+  function afficher() {
+    if (!P || ui.accueil) {
+      ecrans.accueil.hidden = false; ecrans.jeu.hidden = true;
+      document.title = "Escadre — Bataille navale";
+      afficherAccueil();
+      return;
+    }
+    ecrans.accueil.hidden = true; ecrans.jeu.hidden = false;
+    afficherReseau();
+    afficherBandeau();
+    afficherMaGrille();
+    afficherGrilleAdverse();
+    afficherOutils();
+    document.title = monTour() ? "🎯 À toi ! — Escadre" : "Escadre — Bataille navale";
+  }
+
+  function afficherAccueil() {
+    $("#bloc-reprendre").hidden = !P;
+    const v = profil.victoires, d = profil.defaites;
+    $("#stats").textContent = v + d > 0 ? `Ton palmarès : ${v} victoire${v > 1 ? "s" : ""}, ${d} défaite${d > 1 ? "s" : ""}` : "";
+    $("#hors-ligne").hidden = navigator.onLine;
+  }
+
+  function afficherReseau() {
+    const pastille = $("#pastille");
+    let txt;
+    pastille.className = "pastille";
+    if (P.adversaireParti) { txt = P.nomAdverse + " a quitté la partie"; pastille.classList.add("ko"); }
+    else if (ui.reseau === "connecte") { txt = "En ligne avec " + (P.nomAdverse || "ton ami"); pastille.classList.add("ok"); }
+    else if (ui.reseau === "attente") txt = P.nomAdverse ? "En attente du retour de " + P.nomAdverse + "…" : "En attente de ton ami…";
+    else if (ui.reseau === "coupe") { txt = ui.detailReseau || "Connexion perdue, on réessaie…"; pastille.classList.add("ko"); }
+    else if (ui.reseau === "erreur") { txt = ui.detailReseau || "Erreur réseau"; pastille.classList.add("ko"); }
+    else txt = ui.detailReseau || "Connexion…";
+    $("#texte-reseau").textContent = txt + "  ·  " + P.code;
+
+    const invitation = P.role === "hote" && !P.jetonInvite;
+    $("#bloc-invitation").hidden = !invitation;
+    $("#code-partie").textContent = P.code;
+  }
+
+  function afficherBandeau() {
+    const titre = $("#bandeau-titre"), detail = $("#bandeau-detail"), bandeau = $("#bandeau");
+    bandeau.classList.toggle("mon-tour", monTour());
+    const autre = P.nomAdverse || "ton ami";
+    if (P.phase === "arrivee") { titre.textContent = "Connexion à la partie"; detail.textContent = "Code " + P.code; }
+    else if (P.phase === "placement" && !P.pret) {
+      titre.textContent = "Place ta flotte";
+      detail.textContent = P.adversairePret ? autre + " est prêt et t'attend." : (P.regles && P.regles.colles === false ? "Règle : les navires ne se touchent pas." : "");
+    } else if (P.phase === "placement") {
+      titre.textContent = "Flotte prête";
+      detail.textContent = P.nomAdverse ? autre + " place sa flotte…" : "On attend ton ami…";
+    } else if (P.phase === "jeu") {
+      if (monTour()) { titre.textContent = "À toi de tirer"; detail.textContent = ui.visee ? "Cible : " + R.nomCase(ui.visee.x, ui.visee.y) + " — touche encore pour tirer" : "Choisis une case dans les eaux ennemies"; }
+      else if (P.tirsEnvoyes.some((t) => t.res === null)) { titre.textContent = "Tir en cours…"; detail.textContent = ""; }
+      else { titre.textContent = "Tour de " + autre; detail.textContent = autre + " cherche ta flotte…"; }
+    } else if (P.phase === "fin") {
+      titre.textContent = P.gagnant === "moi" ? "Victoire !" : "Défaite";
+      detail.textContent = P.veuxRevanche && !P.ilVeutRevanche ? "En attente de " + autre + " pour la revanche…" : "";
+    }
+  }
+
+  function afficherMaGrille() {
+    const bataille = P.phase === "jeu" || P.phase === "fin";
+    ecrans.jeu.classList.toggle("mode-bataille", bataille);
+    $("#titre-ma-grille").textContent = bataille ? "Ta flotte" : "Ta grille";
+    $("#grille-moi").classList.toggle("verrouillee", P.pret && P.phase === "placement");
+    const touches = P.tirsRecus.filter((t) => t.res !== "eau").length;
+    $("#mes-degats").textContent = bataille ? `${touches}/${R.TOTAL_CASES}` : "";
+
+    for (let y = 0; y < R.TAILLE; y++) for (let x = 0; x < R.TAILLE; x++) caseMoi(x, y).className = "case";
+    P.navires.forEach((n) => {
+      const cs = R.casesDe(n);
+      cs.forEach((c, i) => {
+        const el = caseMoi(c.x, c.y);
+        el.classList.add("nav", n.h ? "nav-h" : "nav-v");
+        if (i === 0) el.classList.add("nav-debut");
+        if (i === cs.length - 1) el.classList.add("nav-fin");
+        if (n.id === ui.selection) el.classList.add("choisi");
+      });
+    });
+    P.tirsRecus.forEach((t, i) => {
+      const el = caseMoi(t.x, t.y);
+      el.classList.add(t.res === "eau" ? "eau" : "touche");
+      if (i === P.tirsRecus.length - 1) el.classList.add("dernier");
+      if (ui.impactMoi === i) { el.classList.add("impact"); }
+    });
+    P.tirsRecus.filter((t) => t.res === "coule").forEach((t) => (t.cases || []).forEach((c) => caseMoi(c.x, c.y).classList.add("coule")));
+    ui.impactMoi = null;
+  }
+
+  function afficherGrilleAdverse() {
+    const bataille = P.phase === "jeu" || P.phase === "fin";
+    $("#zone-adverse").hidden = !bataille;
+    $("#zone-suivi").hidden = !bataille;
+    if (!bataille) return;
+    for (let y = 0; y < R.TAILLE; y++) for (let x = 0; x < R.TAILLE; x++) caseAdverse(x, y).className = "case";
+
+    if (P.phase === "fin" && P.flotteAdverse) {
+      P.flotteAdverse.forEach((n) => R.casesDe(n).forEach((c) => caseAdverse(c.x, c.y).classList.add("revele")));
+    }
+    P.tirsEnvoyes.forEach((t, i) => {
+      const el = caseAdverse(t.x, t.y);
+      el.classList.add(t.res === null ? "attente" : t.res === "eau" ? "eau" : "touche");
+      if (i === P.tirsEnvoyes.length - 1) el.classList.add("dernier");
+      if (ui.impactAdverse === i) el.classList.add("impact");
+    });
+    P.coulesAdverses.forEach((c) => c.cases.forEach((k) => caseAdverse(k.x, k.y).classList.add("coule")));
+    if (ui.visee) caseAdverse(ui.visee.x, ui.visee.y).classList.add("vise");
+    ui.impactAdverse = null;
+
+    const nb = P.tirsEnvoyes.length;
+    $("#compteur-tirs").textContent = nb ? nb + " tir" + (nb > 1 ? "s" : "") : "";
+
+    const suivi = $("#suivi-flotte");
+    suivi.innerHTML = "";
+    R.FLOTTE.forEach((f) => {
+      const li = document.createElement("li");
+      if (P.coulesAdverses.some((c) => c.id === f.id)) li.className = "coule";
+      li.appendChild(coque(f.taille));
+      li.appendChild(document.createTextNode(f.nom));
+      suivi.appendChild(li);
+    });
+  }
+
+  function coque(taille) {
+    const s = document.createElement("span"); s.className = "coque";
+    for (let i = 0; i < taille; i++) s.appendChild(document.createElement("i"));
+    return s;
+  }
+
+  function afficherOutils() {
+    const placement = P.phase === "placement" && !P.pret;
+    $("#outils-placement").hidden = !placement;
+    $("#duo").hidden = P.phase === "arrivee";
+    if (placement) {
+      const quai = $("#quai");
+      quai.innerHTML = "";
+      R.FLOTTE.forEach((f) => {
+        const li = document.createElement("li");
+        const b = document.createElement("button");
+        b.type = "button";
+        if (P.navires.some((n) => n.id === f.id)) b.classList.add("pose");
+        if (ui.selection === f.id) b.classList.add("choisi");
+        b.appendChild(coque(f.taille));
+        b.appendChild(document.createTextNode(f.nom));
+        b.addEventListener("click", () => { ui.selection = ui.selection === f.id ? null : f.id; Sons.debloquer(); afficher(); });
+        li.appendChild(b);
+        quai.appendChild(li);
+      });
+      $("#btn-pret").disabled = !R.flotteValide(P.navires, P.regles);
+    }
+
+    const bataille = P.phase === "jeu";
+    $("#barre-tir").hidden = !(bataille || P.phase === "fin");
+    const feu = $("#btn-feu");
+    if (P.phase === "fin") {
+      feu.disabled = false; feu.textContent = "Voir le résultat";
+    } else if (monTour()) {
+      feu.disabled = !ui.visee;
+      feu.textContent = ui.visee ? "Feu sur " + R.nomCase(ui.visee.x, ui.visee.y) + " !" : "Choisis une case";
+    } else {
+      feu.disabled = true; feu.textContent = "Tour de " + (P.nomAdverse || "ton ami");
+    }
+  }
+
+  /* ------------------------------------------------------------------
+     Fenêtres, annonces, petits messages
+     ------------------------------------------------------------------ */
+  function ouvrirFin() {
+    if (!P || P.phase !== "fin") return;
+    const gagne = P.gagnant === "moi";
+    const tirs = P.tirsEnvoyes.filter((t) => t.res !== null);
+    const reussis = tirs.filter((t) => t.res !== "eau").length;
+    $("#fin-icone").textContent = gagne ? "🏆" : "⚓";
+    $("#fin-titre").textContent = gagne ? "Victoire !" : "Défaite";
+    $("#fin-texte").textContent = gagne ? "Tu as coulé toute la flotte de " + P.nomAdverse + "." : P.nomAdverse + " a coulé toute ta flotte.";
+    $("#fin-tirs").textContent = tirs.length;
+    $("#fin-precision").textContent = (tirs.length ? Math.round((100 * reussis) / tirs.length) : 0) + " %";
+    $("#fin-coules").textContent = P.coulesAdverses.length + "/5";
+    $("#fin-honnetete").textContent = verifierHonnetete();
+    const btn = $("#btn-revanche");
+    btn.disabled = P.veuxRevanche || P.adversaireParti;
+    btn.textContent = P.veuxRevanche ? "En attente de " + P.nomAdverse + "…" : P.ilVeutRevanche ? "Accepter la revanche" : "Revanche";
+    const f = $("#fenetre-fin");
+    if (!f.open) f.showModal();
+  }
+
+  function fermerFenetres() { document.querySelectorAll("dialog[open]").forEach((d) => d.close()); }
+
+  let minuteurAnnonce;
+  function annonce(titre, sousTitre, classe) {
+    const a = $("#annonce");
+    a.className = "annonce " + (classe || "");
+    a.textContent = "";
+    const bloc = document.createElement("div");
+    bloc.textContent = titre;
+    if (sousTitre) { const s = document.createElement("small"); s.textContent = sousTitre; bloc.appendChild(s); }
+    a.appendChild(bloc);
+    void a.offsetWidth;
+    a.classList.add("visible");
+    clearTimeout(minuteurAnnonce);
+    minuteurAnnonce = setTimeout(() => a.classList.remove("visible"), 1500);
+  }
+
+  let minuteurToast;
+  function toast(t) {
+    const el = $("#toast");
+    el.textContent = t;
+    el.classList.add("visible");
+    clearTimeout(minuteurToast);
+    minuteurToast = setTimeout(() => el.classList.remove("visible"), 2600);
+  }
+
+  function bulle(e) {
+    const b = $("#bulle");
+    b.textContent = e;
+    b.classList.remove("visible"); void b.offsetWidth; b.classList.add("visible");
+    if (navigator.vibrate && profil.son) navigator.vibrate(20);
+  }
+
+  const estLocal = () => new URLSearchParams(location.search).has("local");
+  function lienInvitation() {
+    return location.origin + location.pathname + "?salle=" + P.code + (estLocal() ? "&local=1" : "");
+  }
+
+  async function partager() {
+    const lien = lienInvitation();
+    const message = `${profil.nom || "Ton ami"} te défie à la bataille navale sur Escadre ! Code : ${P.code}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: "Escadre", text: message, url: lien }); return; } catch (e) { if (e.name === "AbortError") return; }
+    }
+    copier(message + "\n" + lien);
+  }
+
+  async function copier(t) {
+    try { await navigator.clipboard.writeText(t); toast("Copié !"); }
+    catch (e) { toast("Code : " + P.code); }
+  }
+
+  /* ------------------------------------------------------------------
+     Branchement des boutons
+     ------------------------------------------------------------------ */
+  $("#champ-nom").value = profil.nom;
+  $("#champ-nom").addEventListener("change", () => { profil.nom = nomJoueur(); sauverProfil(); });
+  $("#btn-creer").addEventListener("click", () => { Sons.debloquer(); creerPartie(); });
+  $("#btn-rejoindre").addEventListener("click", () => { Sons.debloquer(); rejoindrePartie($("#champ-code").value); });
+  $("#champ-code").addEventListener("keydown", (e) => { if (e.key === "Enter") rejoindrePartie(e.target.value); });
+  $("#champ-code").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); });
+
+  $("#btn-partager").addEventListener("click", partager);
+  $("#btn-copier").addEventListener("click", () => copier(lienInvitation()));
+  $("#btn-pivoter").addEventListener("click", pivoter);
+  $("#btn-hasard").addEventListener("click", placerAuHasard);
+  $("#btn-pret").addEventListener("click", seDeclarerPret);
+  $("#btn-feu").addEventListener("click", () => {
+    if (P && P.phase === "fin") { ouvrirFin(); return; }
+    if (ui.visee) tirer(ui.visee.x, ui.visee.y);
+  });
+  $("#reactions").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-emoji]");
+    if (!b) return;
+    envoyer({ t: "emoji", e: b.dataset.emoji });
+    bulle(b.dataset.emoji);
+  });
+
+  $("#btn-menu").addEventListener("click", () => { $("#opt-son").checked = profil.son; $("#fenetre-menu").showModal(); });
+  $("#opt-son").addEventListener("change", (e) => { profil.son = e.target.checked; Sons.regler(profil.son); sauverProfil(); });
+  $("#btn-quitter").addEventListener("click", () => { fermerFenetres(); $("#fenetre-confirmer").showModal(); });
+  $("#btn-quitter-oui").addEventListener("click", quitter);
+  $("#btn-revanche").addEventListener("click", demanderRevanche);
+  $("#btn-voir").addEventListener("click", () => $("#fenetre-fin").close());
+  $("#btn-accueil").addEventListener("click", quitter);
+
+  document.querySelectorAll("[data-ouvrir]").forEach((b) => b.addEventListener("click", () => {
+    fermerFenetres(); document.getElementById(b.dataset.ouvrir).showModal();
+  }));
+  document.querySelectorAll("[data-fermer]").forEach((b) => b.addEventListener("click", () => b.closest("dialog").close()));
+
+  // Retour au premier plan (iPhone qui « endort » l'appli) : on vérifie la connexion.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && liaison) liaison.verifier(); });
+  window.addEventListener("online", () => { if (liaison) liaison.verifier(); afficher(); });
+  window.addEventListener("offline", afficher);
+
+  /* ------------------------------------------------------------------
+     Démarrage
+     ------------------------------------------------------------------ */
+  const salle = new URLSearchParams(location.search).get("salle");
+  if (salle && (!P || P.code !== salle.toUpperCase())) {
+    // Lien d'invitation : on pré-remplit le code. Si une autre partie existe,
+    // elle reste proposée avec le bouton « Reprendre ».
+    ui.accueil = true;
+    $("#champ-code").value = salle.toUpperCase().slice(0, 5);
+    if (!profil.nom) $("#champ-nom").focus();
+    toast("Entre ton nom puis touche « Rejoindre ».");
+  }
+  $("#btn-reprendre").addEventListener("click", () => { ui.accueil = false; lancer(); });
+  if (P && !ui.accueil) lancer(); else afficher();
+
+  // Service worker : rend l'appli installable et utilisable hors ligne
+  if ("serviceWorker" in navigator && location.protocol !== "file:") {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+})();

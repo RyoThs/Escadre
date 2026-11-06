@@ -1,0 +1,51 @@
+# Déploiement automatique : à chaque envoi (push) sur main,
+# 1) on lance les tests des règles, 2) on publie le site sur GitHub Pages.
+name: Tester et publier
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # bouton « Run workflow » pour relancer à la main
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Tests des règles
+        run: node tests/regles.test.js
+
+  publier:
+    needs: tests            # pas de publication si un test échoue
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploiement.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Préparer le site (seulement les fichiers utiles)
+        run: |
+          mkdir _site
+          cp -r index.html style.css manifest.json sw.js .nojekyll js icons vendor _site/
+          # Nouvelle version du cache à chaque publication : les téléphones
+          # récupèrent la mise à jour sans qu'on touche à sw.js à la main.
+          sed -i "s/const VERSION = \".*\";/const VERSION = \"${GITHUB_SHA::8}\";/" _site/sw.js
+          grep "const VERSION" _site/sw.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploiement
+        uses: actions/deploy-pages@v4

@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <title>Escadre — Bataille navale</title>
+  <meta name="description" content="La bataille navale revisitée, à deux, chacun sur son téléphone.">
+  <meta name="theme-color" content="#F4EEE2">
+
+  <!-- PWA : installation sur l'écran d'accueil -->
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Escadre">
+
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- =============================== ACCUEIL =============================== -->
+  <main id="ecran-accueil" class="ecran">
+    <header class="logo">
+      <svg class="rose" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        <circle cx="50" cy="50" r="34" fill="none" stroke="currentColor" stroke-width="1" stroke-dasharray="2 3"/>
+        <path d="M50 4 L57 43 L96 50 L57 57 L50 96 L43 57 L4 50 L43 43 Z" fill="currentColor" opacity=".9"/>
+        <path d="M50 4 L57 43 L50 50 Z M96 50 L57 57 L50 50 Z M50 96 L43 57 L50 50 Z M4 50 L43 43 L50 50 Z" fill="var(--corail)"/>
+      </svg>
+      <h1>Escadre</h1>
+      <p class="sous-titre">La bataille navale, revisitée.<br>À deux, chacun sur son téléphone.</p>
+    </header>
+
+    <section class="carte">
+      <label for="champ-nom" class="etiquette">Ton nom de capitaine</label>
+      <input id="champ-nom" class="champ" maxlength="16" autocomplete="nickname" placeholder="Ex. : Yoann">
+    </section>
+
+    <section class="carte" id="bloc-reprendre" hidden>
+      <p class="petit">Une partie est en cours.</p>
+      <button id="btn-reprendre" class="btn btn-principal">Reprendre la partie</button>
+    </section>
+
+    <section class="carte">
+      <h2>Créer une partie</h2>
+      <p class="petit">Tu reçois un code à envoyer à ton ami.</p>
+      <label class="interrupteur">
+        <input type="checkbox" id="opt-colles" checked>
+        <span>Les navires peuvent se toucher</span>
+      </label>
+      <button id="btn-creer" class="btn btn-principal">Créer la partie</button>
+    </section>
+
+    <section class="carte">
+      <h2>Rejoindre un ami</h2>
+      <div class="ligne">
+        <input id="champ-code" class="champ champ-code" maxlength="5" autocapitalize="characters" autocomplete="off" spellcheck="false" placeholder="CODE">
+        <button id="btn-rejoindre" class="btn btn-secondaire">Rejoindre</button>
+      </div>
+    </section>
+
+    <footer class="pied">
+      <p id="stats" class="petit"></p>
+      <button class="lien" data-ouvrir="fenetre-regles">Les règles du jeu</button>
+      <p class="petit discret" id="hors-ligne" hidden>Pas d'Internet : le jeu à deux a besoin du réseau.</p>
+    </footer>
+  </main>
+
+  <!-- ================================ PARTIE ================================ -->
+  <main id="ecran-jeu" class="ecran" hidden>
+    <header class="barre">
+      <div class="statut-reseau">
+        <span id="pastille" class="pastille"></span>
+        <span id="texte-reseau">Connexion…</span>
+      </div>
+      <button id="btn-menu" class="btn-icone" aria-label="Menu">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <!-- Invitation : affichée tant que l'ami n'a pas rejoint -->
+    <section id="bloc-invitation" class="carte invitation" hidden>
+      <p class="petit">Envoie ce code à ton ami :</p>
+      <p id="code-partie" class="code-geant">-----</p>
+      <div class="ligne">
+        <button id="btn-partager" class="btn btn-secondaire">Partager le lien</button>
+        <button id="btn-copier" class="btn btn-fantome">Copier</button>
+      </div>
+      <p class="petit discret">Tu peux placer ta flotte en attendant.</p>
+    </section>
+
+    <!-- Bandeau principal : consignes / à qui le tour -->
+    <section id="bandeau" class="bandeau">
+      <p id="bandeau-titre" class="bandeau-titre">Place ta flotte</p>
+      <p id="bandeau-detail" class="bandeau-detail"></p>
+    </section>
+
+    <!-- Grille adverse (pendant la bataille) -->
+    <section id="zone-adverse" class="zone" hidden>
+      <div class="titre-grille"><span>Eaux ennemies</span><span id="compteur-tirs" class="petit"></span></div>
+      <div id="grille-adverse" class="grille" role="grid" aria-label="Grille adverse"></div>
+    </section>
+
+    <!-- Ma grille (placement, puis petite carte de ma flotte à côté du suivi ennemi) -->
+    <div id="duo" class="duo">
+      <section id="zone-moi" class="zone">
+        <div class="titre-grille"><span id="titre-ma-grille">Ta flotte</span><span id="mes-degats" class="petit"></span></div>
+        <div id="grille-moi" class="grille" role="grid" aria-label="Ma grille"></div>
+      </section>
+      <section id="zone-suivi" class="zone" hidden>
+        <div class="titre-grille"><span>Cibles</span></div>
+        <ul id="suivi-flotte" class="suivi-flotte" aria-label="Flotte adverse"></ul>
+      </section>
+    </div>
+
+    <!-- Outils de placement -->
+    <section id="outils-placement" class="outils">
+      <ul id="quai" class="quai" aria-label="Navires à placer"></ul>
+      <p class="petit discret aide">Choisis un navire, puis touche la grille. Touche un navire posé pour le tourner.</p>
+      <div class="ligne">
+        <button id="btn-pivoter" class="btn btn-fantome">↻ Pivoter</button>
+        <button id="btn-hasard" class="btn btn-fantome">🎲 Aléatoire</button>
+      </div>
+      <button id="btn-pret" class="btn btn-principal" disabled>Je suis prêt</button>
+    </section>
+
+    <!-- Bouton de tir (pendant la bataille) -->
+    <div id="barre-tir" class="barre-tir" hidden>
+      <div class="reactions" id="reactions">
+        <button data-emoji="😂">😂</button><button data-emoji="😱">😱</button>
+        <button data-emoji="🔥">🔥</button><button data-emoji="👏">👏</button>
+        <button data-emoji="😤">😤</button>
+      </div>
+      <button id="btn-feu" class="btn btn-feu" disabled>Choisis une case</button>
+    </div>
+  </main>
+
+  <!-- ============================ FENÊTRES ============================ -->
+  <div id="annonce" class="annonce" aria-live="assertive"></div>
+  <div id="bulle" class="bulle" aria-live="polite"></div>
+  <div id="toast" class="toast" role="status"></div>
+
+  <dialog id="fenetre-fin" class="fenetre">
+    <p id="fin-icone" class="fin-icone">⚓</p>
+    <h2 id="fin-titre">Victoire !</h2>
+    <p id="fin-texte" class="petit"></p>
+    <div class="stats-fin">
+      <div><strong id="fin-tirs">0</strong><span>tirs</span></div>
+      <div><strong id="fin-precision">0 %</strong><span>précision</span></div>
+      <div><strong id="fin-coules">0</strong><span>coulés</span></div>
+    </div>
+    <p id="fin-honnetete" class="petit"></p>
+    <button id="btn-revanche" class="btn btn-principal">Revanche</button>
+    <button id="btn-voir" class="btn btn-fantome">Voir les grilles</button>
+    <button id="btn-accueil" class="btn btn-fantome">Retour à l'accueil</button>
+  </dialog>
+
+  <dialog id="fenetre-menu" class="fenetre">
+    <h2>Menu</h2>
+    <label class="interrupteur"><input type="checkbox" id="opt-son"><span>Sons et vibrations</span></label>
+    <button class="btn btn-fantome" data-ouvrir="fenetre-regles">Les règles</button>
+    <button id="btn-quitter" class="btn btn-danger">Quitter la partie</button>
+    <button class="btn btn-fantome" data-fermer>Fermer</button>
+  </dialog>
+
+  <dialog id="fenetre-regles" class="fenetre fenetre-longue">
+    <h2>Les règles</h2>
+    <ol class="regles">
+      <li>Chaque joueur a une grille de <strong>10 × 10</strong> cases (A à J, 1 à 10).</li>
+      <li>Il y place en secret sa flotte de <strong>5 navires</strong> :
+        porte-avions (5 cases), croiseur (4), contre-torpilleur (3), sous-marin (3) et torpilleur (2).</li>
+      <li>Les navires sont posés à l'horizontale ou à la verticale, jamais en diagonale, et ne se chevauchent pas.
+        Le créateur de la partie choisit s'ils peuvent se toucher.</li>
+      <li>Le premier joueur est tiré au sort. Puis chacun tire <strong>un coup par tour</strong>, à tour de rôle.</li>
+      <li>L'adversaire annonce le résultat : <em>à l'eau</em>, <em>touché</em> ou <em>coulé</em> (quand toutes les cases d'un navire sont touchées ; on dit lequel).</li>
+      <li>Le premier qui coule toute la flotte adverse gagne.</li>
+    </ol>
+    <p class="petit">Ici, c'est l'appli qui annonce les résultats : impossible de tricher ou de se tromper. À la fin, chaque flotte est révélée et vérifiée.</p>
+    <p class="petit">Pour tirer : touche une case pour viser, puis touche-la encore (ou le bouton Feu).</p>
+    <button class="btn btn-principal" data-fermer>J'ai compris</button>
+  </dialog>
+
+  <dialog id="fenetre-confirmer" class="fenetre">
+    <h2>Quitter la partie ?</h2>
+    <p class="petit">Ton ami sera prévenu et la partie sera perdue.</p>
+    <button id="btn-quitter-oui" class="btn btn-danger">Oui, quitter</button>
+    <button class="btn btn-fantome" data-fermer>Annuler</button>
+  </dialog>
+
+  <script src="vendor/peerjs-1.5.5.min.js"></script>
+  <script src="js/regles.js"></script>
+  <script src="js/sons.js"></script>
+  <script src="js/reseau.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
