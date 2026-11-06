@@ -3,7 +3,7 @@
 Jeu de bataille navale à deux, **chacun sur son téléphone** (iPhone ou Android).
 Application web installable (PWA), sans compte, sans serveur à payer.
 
-👉 **Jouer :** `https://ryoths.github.io/escadre/` (une fois GitHub Pages activé)
+👉 **Jouer :** `https://ryoths.github.io/Escadre/` (une fois GitHub Pages activé)
 
 ## Règles
 Grille 10 × 10 · 5 navires (5, 4, 3, 3, 2 cases) · horizontaux ou verticaux, sans chevauchement ·
