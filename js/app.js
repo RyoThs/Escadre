@@ -301,10 +301,16 @@
     afficher();
   }
 
+  // Tous les tirs dont la réponse n'est pas (encore) arrivée sont redemandés.
+  // Sans risque : l'ami renvoie simplement la même réponse s'il l'avait déjà donnée.
   function renvoyerTirEnAttente() {
-    const n = P.tirsEnvoyes.length - 1;
-    const t = P.tirsEnvoyes[n];
-    if (t && t.res === null) envoyer({ t: "tir", partieId: P.partieId, n, x: t.x, y: t.y });
+    let renvoyes = 0;
+    P.tirsEnvoyes.forEach((t, n) => {
+      if (t.res === null && renvoyes < 10) {
+        envoyer({ t: "tir", partieId: P.partieId, n, x: t.x, y: t.y });
+        renvoyes++;
+      }
+    });
   }
 
   function recevoirTir(msg) {
@@ -406,9 +412,9 @@
     if (!P.flotteAdverse.length) return "⚠️ La flotte reçue n'est pas valide.";
     const deja = [];
     for (const t of P.tirsEnvoyes) {
-      if (t.res === null) continue;
       const r = R.resoudreTir(P.flotteAdverse, deja, t.x, t.y);
       deja.push({ x: t.x, y: t.y });
+      if (t.res === null) continue; // réponse pas encore reçue : rien à comparer
       if (r.res !== t.res) return "⚠️ Certaines réponses ne correspondent pas à la flotte révélée.";
     }
     return "✅ Flotte de " + P.nomAdverse + " vérifiée : partie loyale.";
