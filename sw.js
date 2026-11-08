@@ -1,10 +1,10 @@
 /* Escadre — service worker : garde l'appli en mémoire pour l'ouvrir même sans réseau.
    ⚠️ Change VERSION à chaque mise à jour, sinon les téléphones gardent l'ancienne. */
-const VERSION = "v1.1.0";
+const VERSION = "v1.2.0";
 const CACHE = "escadre-" + VERSION;
 const FICHIERS = [
   "./", "./index.html", "./style.css", "./manifest.json",
-  "./js/regles.js", "./js/navires.js", "./js/sons.js", "./js/reseau.js", "./js/app.js",
+  "./js/regles.js", "./js/navires.js", "./js/discussion.js", "./js/sons.js", "./js/reseau.js", "./js/app.js",
   "./vendor/peerjs-1.5.5.min.js",
   "./icons/icon-192.png", "./icons/icon-512.png", "./icons/apple-touch-icon.png",
 ];

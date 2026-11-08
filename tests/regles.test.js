@@ -59,4 +59,34 @@ test("nom des cases", () => {
   assert.strictEqual(R.nomCase(0, 0), "A1");
   assert.strictEqual(R.nomCase(9, 9), "J10");
 });
+
+// ---------- Discussion ----------
+const D = require("../js/discussion.js");
+test("discussion : messages numérotés, doublons ignorés, ordre respecté", () => {
+  const moi = D.initialiser({}), ami = D.initialiser({});
+  const m0 = D.ecrire(moi, "  Salut   capitaine ! ");
+  const m1 = D.ecrire(moi, "Prêt ?");
+  assert.strictEqual(m0.texte, "Salut capitaine !");
+  assert.strictEqual(D.ecrire(moi, "   "), null, "message vide refusé");
+  assert.strictEqual(D.recevoir(ami, m1), null, "message 1 avant le 0 : refusé");
+  assert.ok(D.recevoir(ami, m0));
+  assert.strictEqual(D.recevoir(ami, m0), null, "doublon ignoré");
+  assert.ok(D.recevoir(ami, m1));
+  assert.deepStrictEqual(ami.chat.map((m) => m.texte), ["Salut capitaine !", "Prêt ?"]);
+});
+test("discussion : les messages perdus sont renvoyés", () => {
+  const moi = D.initialiser({}), ami = D.initialiser({});
+  const envois = ["a", "b", "c"].map((t) => D.ecrire(moi, t));
+  D.recevoir(ami, envois[0]);                          // b et c se sont perdus
+  const renvoi = D.aRenvoyer(moi, ami.chatRecus);
+  assert.deepStrictEqual(renvoi.map((m) => m.texte), ["b", "c"]);
+  renvoi.forEach((m) => D.recevoir(ami, m));
+  assert.strictEqual(ami.chatRecus, 3);
+  assert.deepStrictEqual(D.aRenvoyer(moi, ami.chatRecus), []);
+});
+test("discussion : texte trop long coupé, contenu non textuel refusé", () => {
+  const moi = D.initialiser({}), ami = D.initialiser({});
+  assert.strictEqual(D.ecrire(moi, "x".repeat(500)).texte.length, D.LONGUEUR_MAX);
+  assert.strictEqual(D.recevoir(ami, { t: "chat", n: 0, texte: { pas: "du texte" } }), null);
+});
 console.log(`\n${ok} tests réussis`);

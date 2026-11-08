@@ -45,7 +45,7 @@
   if (P && Date.now() - (P.maj || 0) > DUREE_REPRISE) { P = null; effacer(CLE_PARTIE); }
 
   let liaison = null;
-  const ui = { selection: null, horizontal: true, visee: null, reseau: "connexion", detailReseau: "", accueil: false };
+  const ui = { selection: null, horizontal: true, visee: null, reseau: "connexion", detailReseau: "", accueil: false, nonLus: 0 };
 
   function sauver() {
     if (!P) return;
@@ -104,6 +104,7 @@
 
   function lancer() {
     if (liaison) liaison.fermer();
+    Discussion.initialiser(P);
     ui.selection = null; ui.visee = null; ui.accueil = false;
     liaison = Reseau.Liaison({
       role: P.role,
@@ -116,6 +117,7 @@
         // alors une mémoire neuve) : accepté tant que la bataille n'a pas commencé.
         if (P.phase === "placement" && !P.tirsEnvoyes.length && !P.tirsRecus.length) {
           P.adversairePret = false; P.nomAdverse = "";
+          Discussion.vider(P); ui.nonLus = 0;
           return true;
         }
         return false;
@@ -142,7 +144,7 @@
   function envoyer(msg) { if (liaison) liaison.envoyer(msg); }
 
   function envoyerEtat() {
-    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom, aSaFlotte: !!P.flotteAdverse });
+    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom, aSaFlotte: !!P.flotteAdverse, chatRecus: P.chatRecus });
   }
 
   function envoyerFlotte() {
@@ -185,6 +187,12 @@
         break;
 
       case "etat": {
+        // Discussion : on renvoie les messages que l'ami n'a pas encore reçus
+        Discussion.aRenvoyer(P, msg.chatRecus).forEach(envoyer);
+        if (Number.isInteger(msg.chatRecus) && msg.chatRecus > (P.chatConfirmes || 0) && msg.chatRecus <= P.chatEnvoyes) {
+          P.chatConfirmes = msg.chatRecus;
+          if ($("#fenetre-chat").open) afficherChat(false);
+        }
         if (msg.partieId !== P.partieId) {
           // Pas la même partie des deux côtés (un message s'est perdu) : on resynchronise.
           if (P.role === "hote") {
@@ -226,6 +234,19 @@
         P.ilVeutRevanche = true;
         if (P.role === "hote" && P.veuxRevanche) lancerRevanche();
         break;
+
+      case "chat": {
+        const m = Discussion.recevoir(P, msg);
+        if (!m) return;
+        if ($("#fenetre-chat").open) afficherChat(true);
+        else {
+          ui.nonLus++;
+          toast((P.nomAdverse || "Ton ami") + " : " + (m.texte.length > 60 ? m.texte.slice(0, 60) + "…" : m.texte));
+        }
+        Sons.message();
+        sauver(); afficherBadge();
+        return;
+      }
 
       case "emoji":
         if (["😂", "😱", "🔥", "👏", "😤"].includes(msg.e)) bulle(msg.e);
@@ -513,6 +534,7 @@
     afficherOutils();
     document.title = monTour() ? "🎯 À toi ! — Escadre" : "Escadre — Bataille navale";
     if ($("#fenetre-fin").open) $("#fin-honnetete").textContent = verifierHonnetete();
+    afficherBadge();
   }
 
   function afficherAccueil() {
@@ -695,6 +717,61 @@
 
   function fermerFenetres() { document.querySelectorAll("dialog[open]").forEach((d) => d.close()); }
 
+  /* ------------------------------------------------------------------
+     Discussion
+     ------------------------------------------------------------------ */
+  function afficherBadge() {
+    const badge = $("#badge-chat");
+    badge.hidden = ui.nonLus === 0;
+    badge.textContent = ui.nonLus > 9 ? "9+" : String(ui.nonLus);
+  }
+
+  const heure = (h) => new Date(h).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+  function afficherChat(defilerEnBas) {
+    $("#chat-titre").textContent = "Discussion avec " + (P.nomAdverse || "ton ami");
+    const fil = $("#fil-chat");
+    fil.innerHTML = "";
+    if (!P.chat.length) {
+      const vide = document.createElement("li");
+      vide.className = "chat-vide";
+      vide.textContent = P.nomAdverse ? "Dis bonjour à " + P.nomAdverse + " 👋" : "Tes messages partiront dès que ton ami aura rejoint.";
+      fil.appendChild(vide);
+    }
+    let jourPrecedent = "";
+    P.chat.forEach((m) => {
+      const li = document.createElement("li");
+      li.className = "msg " + m.de;
+      const bulle = document.createElement("p");
+      bulle.textContent = m.texte;            // textContent : le texte de l'ami ne peut pas injecter de code
+      const info = document.createElement("time");
+      // Message pas encore confirmé par l'ami : petite horloge
+      const suivi = m.de !== "moi" ? "" : m.n < (P.chatConfirmes || 0) ? " · ✓ reçu" : " · ⏳";
+      info.textContent = heure(m.h) + suivi;
+      li.append(bulle, info);
+      fil.appendChild(li);
+    });
+    if (defilerEnBas) fil.scrollTop = fil.scrollHeight;
+  }
+
+  function ouvrirChat() {
+    fermerFenetres();
+    ui.nonLus = 0;
+    afficherBadge();
+    afficherChat(true);
+    $("#fenetre-chat").showModal();
+    $("#fil-chat").scrollTop = $("#fil-chat").scrollHeight;
+  }
+
+  function envoyerChat(texte) {
+    const msg = Discussion.ecrire(P, texte);
+    if (!msg) return;
+    envoyer(msg);
+    Sons.clic();
+    sauver();
+    afficherChat(true);
+  }
+
   let minuteurAnnonce;
   function annonce(titre, sousTitre, classe) {
     const a = $("#annonce");
@@ -771,6 +848,18 @@
     bulle(b.dataset.emoji);
   });
 
+  $("#btn-chat").addEventListener("click", () => { Sons.debloquer(); ouvrirChat(); });
+  $("#form-chat").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const champ = $("#champ-chat");
+    envoyerChat(champ.value);
+    champ.value = "";
+    champ.focus();
+  });
+  $("#reponses-rapides").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (b) envoyerChat(b.textContent);
+  });
   $("#btn-menu").addEventListener("click", () => { $("#opt-son").checked = profil.son; $("#fenetre-menu").showModal(); });
   $("#opt-son").addEventListener("change", (e) => { profil.son = e.target.checked; Sons.regler(profil.son); sauverProfil(); });
   $("#btn-quitter").addEventListener("click", () => { fermerFenetres(); $("#fenetre-confirmer").showModal(); });

@@ -262,6 +262,49 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 }
 .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); }
 
+/* ---------- Discussion ---------- */
+.actions-barre { display: flex; gap: 8px; flex: none; }
+.btn-icone { position: relative; }
+.badge {
+  position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px;
+  border-radius: 10px; background: var(--corail); color: #fff; font: 700 12px/20px var(--sans);
+  text-align: center; box-shadow: 0 0 0 2px var(--papier); animation: pop .3s ease-out;
+}
+@keyframes pop { 0% { transform: scale(.4); } 70% { transform: scale(1.15); } 100% { transform: scale(1); } }
+
+.fenetre.chat {
+  margin: auto auto 0; width: min(480px, 100vw); max-width: 100vw;
+  border-radius: 22px 22px 0 0; height: min(78dvh, 640px);
+  padding: 14px 14px calc(env(safe-area-inset-bottom) + 12px);
+}
+.fenetre.chat[open] { gap: 8px; animation: monte .25s ease-out; }
+@keyframes monte { from { transform: translateY(40px); opacity: 0; } }
+.chat-tete { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.chat-tete h2 { font-size: 20px; text-align: left; margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fil-chat {
+  list-style: none; margin: 0; padding: 8px 4px; flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--eau); border-radius: 14px; overscroll-behavior: contain;
+}
+.chat-vide { margin: auto; color: var(--encre-douce); font-size: 15px; text-align: center; padding: 0 20px; }
+.msg { display: flex; flex-direction: column; max-width: 80%; }
+.msg p { margin: 0; padding: 8px 12px; border-radius: 16px; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+.msg time { font-size: 11px; color: var(--encre-douce); margin: 2px 8px 0; }
+.msg.moi { align-self: flex-end; align-items: flex-end; }
+.msg.moi p { background: var(--encre); color: #fff; border-bottom-right-radius: 4px; }
+.msg.lui { align-self: flex-start; }
+.msg.lui p { background: var(--carte); color: var(--encre); border: 1px solid var(--trait); border-bottom-left-radius: 4px; }
+.reponses-rapides { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.reponses-rapides::-webkit-scrollbar { display: none; }
+.reponses-rapides button {
+  flex: none; border: 1px solid var(--trait); background: var(--carte); border-radius: 999px;
+  padding: 7px 12px; font-size: 14px; white-space: nowrap;
+}
+.reponses-rapides button:active { background: var(--sable); }
+.form-chat { display: flex; gap: 8px; }
+.form-chat .champ { flex: 1; min-width: 0; font-size: 16px; /* 16 px : l'iPhone ne zoome pas */ }
+.form-chat .btn { flex: none; width: 54px; padding: 0; font-size: 20px; }
+
 /* ---------- Fenêtres ---------- */
 .fenetre {
   border: 0; border-radius: 22px; padding: 22px; width: min(420px, calc(100vw - 32px));

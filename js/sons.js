@@ -62,6 +62,7 @@
     tonTour() { if (actif) { note(660, 0, 0.18, 0.08); note(990, 0.12, 0.25, 0.08); } vibrer(40); },
     victoire() { if (actif) [523, 659, 784, 1047].forEach((f, i) => note(f, i * 0.14, 0.4, 0.1, "triangle")); vibrer([80, 50, 80, 50, 300]); },
     defaite() { if (actif) [392, 330, 262, 196].forEach((f, i) => note(f, i * 0.2, 0.45, 0.1, "sine")); vibrer(400); },
+    message() { if (actif) { note(880, 0, 0.12, 0.06); note(1320, 0.09, 0.18, 0.05); } vibrer(25); },
     clic() { if (actif) note(520, 0, 0.06, 0.05, "sine"); },
   };
 

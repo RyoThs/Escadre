@@ -22,6 +22,7 @@ Option : autoriser ou non les navires qui se touchent.
 | `js/regles.js` | les règles du jeu (testées) |
 | `js/reseau.js` | la connexion entre téléphones (PeerJS / WebRTC) et la reconnexion |
 | `js/navires.js` | dessin des navires (vue de dessus, SVG) |
+| `js/discussion.js` | la discussion entre amis (messages numérotés et renvoyés s'ils se perdent) |
 | `js/sons.js` | sons et vibrations |
 | `js/app.js` | le déroulé de la partie et l'affichage |
 | `sw.js`, `manifest.json`, `icons/` | ce qui rend l'appli installable et utilisable hors ligne |
