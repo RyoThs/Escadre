@@ -111,9 +111,17 @@
       bonjour: () => ({ t: "bonjour", jeton: profil.jeton, nom: profil.nom, partieId: P.partieId }),
       accepter: (msg) => {
         if (typeof msg.jeton !== "string") return false;
-        return !P.jetonInvite || P.jetonInvite === msg.jeton; // seul le même ami peut revenir
+        if (!P.jetonInvite || P.jetonInvite === msg.jeton) return true; // le même ami revient
+        // Un autre téléphone (ou le même ami après avoir installé l'appli, qui a
+        // alors une mémoire neuve) : accepté tant que la bataille n'a pas commencé.
+        if (P.phase === "placement" && !P.tirsEnvoyes.length && !P.tirsRecus.length) {
+          P.adversairePret = false; P.nomAdverse = "";
+          return true;
+        }
+        return false;
       },
       surMessage: recevoir,
+      battement: () => { if (P) envoyerEtat(); }, // toutes les 3 s : rattrape les messages perdus
       surEtat: (etat, detail) => { ui.reseau = etat; ui.detailReseau = detail || ""; afficher(); },
     });
     if (P.role === "invite" && history.replaceState) history.replaceState(null, "", location.pathname + (estLocal() ? "?local=1" : ""));
@@ -134,7 +142,7 @@
   function envoyer(msg) { if (liaison) liaison.envoyer(msg); }
 
   function envoyerEtat() {
-    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom });
+    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom, aSaFlotte: !!P.flotteAdverse });
   }
 
   function envoyerFlotte() {
@@ -176,17 +184,29 @@
         envoyerEtat();
         break;
 
-      case "etat":
-        if (msg.partieId !== P.partieId) return;
+      case "etat": {
+        if (msg.partieId !== P.partieId) {
+          // Pas la même partie des deux côtés (un message s'est perdu) : on resynchronise.
+          if (P.role === "hote") {
+            envoyer({ t: "bienvenue", partieId: P.partieId, premier: P.premier, regles: P.regles, nom: profil.nom });
+            envoyerEtat();
+          } else {
+            envoyer({ t: "bonjour", jeton: profil.jeton, nom: profil.nom, partieId: P.partieId });
+          }
+          return;
+        }
         if (msg.nom) P.nomAdverse = texte(msg.nom);
+        const avant = P.adversairePret, phaseAvant = P.phase;
         if (msg.pret && !P.adversairePret && P.phase === "placement") toast(P.nomAdverse + " est prêt !");
         P.adversairePret = !!msg.pret;
         verifierDebut();
-        // Rattrapage après une coupure : on renvoie ce qui a pu se perdre
+        // Rattrapage : on renvoie ce qui a pu se perdre (tout est sans risque en double)
         renvoyerTirEnAttente();
-        if (P.phase === "fin") envoyerFlotte();
+        if (P.phase === "fin" && !msg.aSaFlotte) envoyerFlotte();
         if (P.veuxRevanche) envoyer({ t: "revanche", partieId: P.partieId });
+        if (avant === P.adversairePret && phaseAvant === P.phase) { sauver(); return; } // rien de neuf : pas besoin de redessiner
         break;
+      }
 
       case "tir": recevoirTir(msg); break;
       case "resultat": recevoirResultat(msg); break;
@@ -440,16 +460,20 @@
      Construction des grilles (une seule fois)
      ------------------------------------------------------------------ */
   function construireGrille(el, auToucher) {
+    // Chaque élément reçoit sa place exacte (colonne, ligne) : ainsi les dessins
+    // de navires peuvent se poser par-dessus sans décaler les cases.
+    const placer = (e, col, lig) => { e.style.gridColumn = col; e.style.gridRow = lig; el.appendChild(e); };
     el.innerHTML = "";
-    el.appendChild(document.createElement("span"));
+    placer(document.createElement("span"), 1, 1);
     for (let x = 0; x < R.TAILLE; x++) {
-      const s = document.createElement("span"); s.className = "repere"; s.textContent = R.LETTRES[x]; el.appendChild(s);
+      const s = document.createElement("span"); s.className = "repere"; s.textContent = R.LETTRES[x]; placer(s, x + 2, 1);
     }
     const cases = [];
     for (let y = 0; y < R.TAILLE; y++) {
-      const s = document.createElement("span"); s.className = "repere"; s.textContent = y + 1; el.appendChild(s);
+      const s = document.createElement("span"); s.className = "repere"; s.textContent = y + 1; placer(s, 1, y + 2);
       for (let x = 0; x < R.TAILLE; x++) {
         const b = document.createElement("button");
+        b.style.gridColumn = x + 2; b.style.gridRow = y + 2;
         b.className = "case"; b.type = "button";
         b.setAttribute("aria-label", R.nomCase(x, y));
         b.addEventListener("click", () => { Sons.debloquer(); auToucher(x, y); });
@@ -488,6 +512,7 @@
     afficherGrilleAdverse();
     afficherOutils();
     document.title = monTour() ? "🎯 À toi ! — Escadre" : "Escadre — Bataille navale";
+    if ($("#fenetre-fin").open) $("#fin-honnetete").textContent = verifierHonnetete();
   }
 
   function afficherAccueil() {
@@ -544,15 +569,13 @@
     $("#mes-degats").textContent = bataille ? `${touches}/${R.TOTAL_CASES}` : "";
 
     for (let y = 0; y < R.TAILLE; y++) for (let x = 0; x < R.TAILLE; x++) caseMoi(x, y).className = "case";
+    const grille = $("#grille-moi");
+    grille.querySelectorAll(".silhouette").forEach((e) => e.remove());
+    const coules = new Set(P.tirsRecus.filter((t) => t.res === "coule").map((t) => t.navire));
     P.navires.forEach((n) => {
-      const cs = R.casesDe(n);
-      cs.forEach((c, i) => {
-        const el = caseMoi(c.x, c.y);
-        el.classList.add("nav", n.h ? "nav-h" : "nav-v");
-        if (i === 0) el.classList.add("nav-debut");
-        if (i === cs.length - 1) el.classList.add("nav-fin");
-        if (n.id === ui.selection) el.classList.add("choisi");
-      });
+      R.casesDe(n).forEach((c) => caseMoi(c.x, c.y).classList.add("nav"));
+      const classes = (n.id === ui.selection ? "choisi " : "") + (coules.has(n.id) ? "coule" : "");
+      grille.appendChild(Navires.element(n, R.infoNavire(n.id).taille, classes));
     });
     P.tirsRecus.forEach((t, i) => {
       const el = caseMoi(t.x, t.y);
@@ -570,9 +593,23 @@
     $("#zone-suivi").hidden = !bataille;
     if (!bataille) return;
     for (let y = 0; y < R.TAILLE; y++) for (let x = 0; x < R.TAILLE; x++) caseAdverse(x, y).className = "case";
+    const grille = $("#grille-adverse");
+    grille.querySelectorAll(".silhouette").forEach((e) => e.remove());
 
+    // Navires ennemis coulés : on dessine leur épave
+    P.coulesAdverses.forEach((c) => {
+      if (!c.cases.length) return;
+      const xs = c.cases.map((k) => k.x), ys = c.cases.map((k) => k.y);
+      const navire = { id: c.id, x: Math.min(...xs), y: Math.min(...ys), h: new Set(ys).size === 1 };
+      grille.appendChild(Navires.element(navire, R.infoNavire(c.id).taille, "coule"));
+      c.cases.forEach((k) => caseAdverse(k.x, k.y).classList.add("nav"));
+    });
+    // Fin de partie : les navires ennemis rescapés apparaissent en transparence
     if (P.phase === "fin" && P.flotteAdverse) {
-      P.flotteAdverse.forEach((n) => R.casesDe(n).forEach((c) => caseAdverse(c.x, c.y).classList.add("revele")));
+      P.flotteAdverse.filter((n) => !P.coulesAdverses.some((c) => c.id === n.id)).forEach((n) => {
+        grille.appendChild(Navires.element(n, R.infoNavire(n.id).taille, "revele"));
+        R.casesDe(n).forEach((c) => caseAdverse(c.x, c.y).classList.add("nav"));
+      });
     }
     P.tirsEnvoyes.forEach((t, i) => {
       const el = caseAdverse(t.x, t.y);
@@ -592,17 +629,12 @@
     R.FLOTTE.forEach((f) => {
       const li = document.createElement("li");
       if (P.coulesAdverses.some((c) => c.id === f.id)) li.className = "coule";
-      li.appendChild(coque(f.taille));
+      li.appendChild(Navires.icone(f.id, f.taille));
       li.appendChild(document.createTextNode(f.nom));
       suivi.appendChild(li);
     });
   }
 
-  function coque(taille) {
-    const s = document.createElement("span"); s.className = "coque";
-    for (let i = 0; i < taille; i++) s.appendChild(document.createElement("i"));
-    return s;
-  }
 
   function afficherOutils() {
     const placement = P.phase === "placement" && !P.pret;
@@ -617,7 +649,7 @@
         b.type = "button";
         if (P.navires.some((n) => n.id === f.id)) b.classList.add("pose");
         if (ui.selection === f.id) b.classList.add("choisi");
-        b.appendChild(coque(f.taille));
+        b.appendChild(Navires.icone(f.id, f.taille));
         b.appendChild(document.createTextNode(f.nom));
         b.addEventListener("click", () => { ui.selection = ui.selection === f.id ? null : f.id; Sons.debloquer(); afficher(); });
         li.appendChild(b);

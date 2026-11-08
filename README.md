@@ -21,6 +21,7 @@ Option : autoriser ou non les navires qui se touchent.
 | `style.css` | le style « carte marine » (thème clair) |
 | `js/regles.js` | les règles du jeu (testées) |
 | `js/reseau.js` | la connexion entre téléphones (PeerJS / WebRTC) et la reconnexion |
+| `js/navires.js` | dessin des navires (vue de dessus, SVG) |
 | `js/sons.js` | sons et vibrations |
 | `js/app.js` | le déroulé de la partie et l'affichage |
 | `sw.js`, `manifest.json`, `icons/` | ce qui rend l'appli installable et utilisable hors ligne |
@@ -33,6 +34,7 @@ Option : autoriser ou non les navires qui se touchent.
 python -m http.server 8000
 ```
 Puis ouvrir **deux onglets** sur `http://localhost:8000/?local=1` : l'un crée la partie, l'autre la rejoint avec le code.
+Pour simuler un mauvais réseau (4G faible), ajoute `&perte=0.3` : 30 % des messages sont perdus au hasard, et la partie doit quand même aller jusqu'au bout.
 
 ## Publier une mise à jour
 Il suffit de pousser sur `main` : GitHub lance les tests, puis publie le site.

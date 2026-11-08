@@ -9,8 +9,9 @@
    - Le serveur sert seulement à se trouver : il ne voit pas la partie.
 
    Ce fichier gère aussi les coupures (métro, appli mise en arrière-plan) :
-   un « battement de cœur » (ping) toutes les 4 s détecte une connexion morte,
-   puis l'invité se reconnecte tout seul.
+   un « battement de cœur » toutes les 3 s détecte une connexion morte,
+   puis l'invité se reconnecte tout seul. À chaque battement, l'appli renvoie
+   aussi son état (prêt, tirs…) : si un message s'est perdu, il est rattrapé.
 
    Astuce test : ajoute « ?local=1 » à l'adresse pour jouer dans deux onglets
    du même ordinateur, sans Internet (BroadcastChannel au lieu de PeerJS).
@@ -19,7 +20,7 @@
   "use strict";
 
   const PREFIXE = "escadre-v1-";
-  const PING_MS = 4000;          // envoi d'un ping toutes les 4 secondes
+  const PING_MS = 3000;          // un battement toutes les 3 secondes
   const SILENCE_MAX_MS = 15000;  // sans nouvelles depuis 15 s = connexion morte
 
   /* --- Petit outil : un objet qui peut émettre des événements --- */
@@ -32,6 +33,7 @@
   }
 
   /* --- Faux PeerJS pour tester dans deux onglets (mode ?local=1) --- */
+  const PERTE_TEST = Math.min(0.9, Number(new URLSearchParams(location.search).get("perte")) || 0);
   function FauxPeer(id) {
     const moi = Object.assign(Emetteur(), { id: id || "local-" + Math.random().toString(36).slice(2, 9), open: false });
     const canal = new BroadcastChannel("escadre-local");
@@ -40,7 +42,11 @@
     function nouvelleConn(cid, distant) {
       const c = Object.assign(Emetteur(), {
         open: false, peer: distant,
-        send(data) { if (c.open) canal.postMessage({ type: "data", cid, de: moi.id, a: distant, data }); },
+        send(data) {
+          if (!c.open) return;
+          if (Math.random() < PERTE_TEST) return; // ?perte=0.3 : simule un réseau qui perd 30 % des messages
+          canal.postMessage({ type: "data", cid, de: moi.id, a: distant, data });
+        },
         close() {
           if (!connexions[cid]) return;
           delete connexions[cid];
@@ -102,6 +108,7 @@
        bonjour() -> objet          (invité : message envoyé à la connexion)
        surMessage(msg)             (un message de jeu arrive)
        surEtat(etat, detail)       (« connexion », « attente », « connecte », « coupe », « erreur »)
+       battement()                 (appelé toutes les 3 s quand on est connecté)
      }
      ======================================================================== */
   function Liaison(options) {
@@ -110,6 +117,7 @@
     let peer = null;
     let conn = null;            // la connexion validée avec l'autre joueur
     let dernierSignal = 0;      // dernier message reçu (pour le ping)
+    let accueilli = false;      // invité : l'hôte nous a-t-il répondu ?
     let minuteurPing = null;
     let minuteurReco = null;
     let essais = 0;
@@ -132,7 +140,10 @@
       clearInterval(minuteurPing);
       minuteurPing = setInterval(() => {
         if (!conn) return;
+        // Invité pas encore accueilli : le « bonjour » s'est peut-être perdu, on le renvoie.
+        if (role === "invite" && !accueilli) envoyer(options.bonjour());
         envoyer({ t: "ping" });
+        if (options.battement) options.battement();
         if (Date.now() - dernierSignal > SILENCE_MAX_MS) {
           perdre(conn); // plus de nouvelles : on considère la connexion morte
         }
@@ -143,6 +154,7 @@
       c.on("data", (msg) => {
         if (!msg || typeof msg !== "object") return;
         dernierSignal = Date.now();
+        if (role === "invite" && c === conn) accueilli = true; // l'hôte nous parle : on est accepté
         if (c !== conn && !validee.ok) {
           // Hôte : le tout premier message d'un nouvel arrivant doit être « bonjour »
           if (role === "hote" && msg.t === "bonjour") {
@@ -219,10 +231,11 @@
       etat("connexion");
       peer = creerPeer(null);
       peer.on("open", () => {
-        const c = peer.connect(idHote, { reliable: true });
+        // « json » : format le plus simple et le plus fiable entre iPhone et Android.
+        const c = peer.connect(idHote, { reliable: true, serialization: "json" });
         const validee = { ok: true };
         c.on("open", () => {
-          conn = c; essais = 0; dernierSignal = Date.now();
+          conn = c; essais = 0; dernierSignal = Date.now(); accueilli = false;
           surveiller();
           c.send(options.bonjour());
           etat("connecte");

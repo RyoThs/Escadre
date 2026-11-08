@@ -124,7 +124,7 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 .titre-grille { display: flex; justify-content: space-between; align-items: baseline; font: 600 15px var(--serif); text-transform: uppercase; letter-spacing: 1.5px; }
 .grille {
   display: grid;
-  grid-template-columns: 18px repeat(10, 1fr);
+  grid-template-columns: 18px repeat(10, minmax(0, 1fr));
   gap: 2px;
   background: var(--carte);
   border: 1px solid var(--trait);
@@ -142,23 +142,50 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 }
 .case::after { content: ""; position: absolute; }
 
-/* navires (sur ma grille) */
-.case.nav { background: var(--navire); }
-.case.nav.nav-h { border-radius: 0; }
-.case.nav.nav-v { border-radius: 0; }
-.case.nav-h.nav-debut { border-radius: 40% 4px 4px 40% / 50% 4px 4px 50%; }
-.case.nav-h.nav-fin { border-radius: 4px 50% 50% 4px; }
-.case.nav-v.nav-debut { border-radius: 50% 50% 4px 4px / 40% 40% 4px 4px; }
-.case.nav-v.nav-fin { border-radius: 4px 4px 50% 50%; }
-.case.nav.choisi { background: #4A6AA8; box-shadow: 0 0 0 2px var(--corail) inset; }
-.case.revele { background: rgba(44, 63, 102, .28); }
+/* navires : dessins SVG posés par-dessus les cases (voir js/navires.js)
+   Ordre d'empilement : eau (cases) < navire < marques de tir (cases au-dessus) */
+.case { z-index: 1; }
+.case.nav { background: transparent; }
+.silhouette { z-index: 0; pointer-events: none; position: relative; min-width: 0; min-height: 0; }
+.silhouette svg { position: absolute; inset: 1px; width: calc(100% - 2px); height: calc(100% - 2px); display: block; overflow: visible;
+  filter: drop-shadow(0 2px 2px rgba(23, 40, 74, .25)); }
+.n-coque { fill: #2C3F66; stroke: #14223F; stroke-width: 3; vector-effect: non-scaling-stroke; }
+.n-coque.sous-marin { fill: #233453; }
+.n-pont { fill: #3D5488; }
+.n-detail { fill: #9DB2D6; stroke: #14223F; stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.n-ombre { fill: #22355C; }
+.n-canon { stroke: #14223F; stroke-width: 6; stroke-linecap: round; }
+.n-marque { fill: #E9EEF6; stroke: #E9EEF6; stroke-width: 3; }
+.n-piste { stroke: #E9EEF6; stroke-width: 3; stroke-dasharray: 18 12; vector-effect: non-scaling-stroke; }
+.n-piste.fine { stroke-width: 1.5; opacity: .6; }
+/* navire choisi pendant le placement */
+.silhouette.choisi svg { filter: drop-shadow(0 0 4px var(--corail)) drop-shadow(0 0 1px var(--corail)); }
+.silhouette.choisi .n-pont { fill: #5672AE; }
+/* navire coulé : épave rouge */
+.silhouette.coule .n-coque { fill: #8E2F21; stroke: #5E1D13; }
+.silhouette.coule .n-pont { fill: #B83A27; }
+.silhouette.coule .n-detail { fill: #E9A193; stroke: #5E1D13; }
+.silhouette.coule .n-ombre, .silhouette.coule .n-canon { fill: #5E1D13; stroke: #5E1D13; }
+.silhouette.coule svg { filter: none; }
+/* fin de partie : navires ennemis rescapés, en transparence */
+.silhouette.revele { opacity: .45; }
+.case.nav.vise, .case.nav:active { background: transparent; }
+
+/* petites icônes de navires dans les listes */
+.icone-navire { display: inline-block; height: 13px; flex: none; }
+.icone-navire svg { width: 100%; height: 100%; display: block; }
+.suivi-flotte li.coule .icone-navire { opacity: .9; }
 
 /* tirs */
 .case.eau::after { width: 26%; height: 26%; border-radius: 50%; background: var(--encre-douce); opacity: .55; }
 .case.touche { background: #F6C9BF; }
 .case.touche::after { width: 52%; height: 52%; border-radius: 50%; background: var(--corail); box-shadow: 0 0 0 3px rgba(224,83,61,.25); }
-.case.nav.touche { background: var(--navire); }
-.case.coule { background: var(--corail-fonce) !important; }
+.case.nav.touche { background: transparent; }
+.case.nav.touche::after { background: #FF6B4F; box-shadow: 0 0 0 3px rgba(255, 190, 120, .55), 0 0 8px 2px rgba(255, 120, 60, .8); }
+.case.coule { background: transparent; }
+.case.nav.coule::after { width: 46%; height: 46%; border-radius: 0; box-shadow: none; background:
+  linear-gradient(45deg, transparent 40%, #FFE3DC 40%, #FFE3DC 60%, transparent 60%),
+  linear-gradient(-45deg, transparent 40%, #FFE3DC 40%, #FFE3DC 60%, transparent 60%); }
 .case.coule::after { width: 60%; height: 60%; background:
   linear-gradient(45deg, transparent 43%, #fff 43%, #fff 57%, transparent 57%),
   linear-gradient(-45deg, transparent 43%, #fff 43%, #fff 57%, transparent 57%); border-radius: 0; box-shadow: none; }
@@ -177,14 +204,14 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 
 /* pendant la bataille : ma petite grille à gauche, le suivi des cibles à droite */
 .mode-bataille .duo { display: grid; grid-template-columns: 56% 1fr; gap: 12px; align-items: start; }
-.mode-bataille #zone-moi .grille { padding: 5px 5px 5px 2px; gap: 1px; grid-template-columns: 11px repeat(10, 1fr); border-radius: 10px; }
+.mode-bataille #zone-moi .grille { padding: 5px 5px 5px 2px; gap: 1px; grid-template-columns: 11px repeat(10, minmax(0, 1fr)); border-radius: 10px; }
 .mode-bataille #zone-moi .repere { font-size: 7px; }
 .mode-bataille #zone-moi .titre-grille { font-size: 12px; letter-spacing: 1px; flex-wrap: wrap; gap: 4px; }
 .mode-bataille .titre-grille .petit { font: 12px var(--sans); text-transform: none; letter-spacing: 0; }
 #zone-suivi .titre-grille { font-size: 12px; letter-spacing: 1px; }
 #zone-suivi .suivi-flotte { flex-direction: column; gap: 5px; }
 #zone-suivi .suivi-flotte li { font-size: 12px; padding: 4px 8px; white-space: nowrap; }
-#zone-suivi .coque i { width: 6px; height: 6px; }
+#zone-suivi .icone-navire { height: 10px; }
 
 /* ---------- Quai de placement / suivi de flotte ---------- */
 .outils { display: flex; flex-direction: column; gap: 10px; }
@@ -195,15 +222,11 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 }
 .quai li button.choisi { border-color: var(--corail); box-shadow: 0 0 0 3px rgba(224,83,61,.15); }
 .quai li button.pose { opacity: .55; }
-.coque { display: inline-flex; gap: 2px; }
-.coque i { width: 9px; height: 9px; background: var(--navire); border-radius: 2px; }
-.coque i:first-child { border-radius: 5px 2px 2px 5px; }
-.coque i:last-child { border-radius: 2px 5px 5px 2px; }
 .aide { text-align: center; }
 
 .suivi-flotte li { display: flex; align-items: center; gap: 6px; font-size: 13px; padding: 4px 8px; border-radius: 999px; background: var(--carte); border: 1px solid var(--trait); }
 .suivi-flotte li.coule { text-decoration: line-through; color: var(--corail-fonce); border-color: #F1B4A9; }
-.suivi-flotte li.coule .coque i { background: var(--corail); }
+.suivi-flotte li.coule .icone-navire .n-coque { fill: #8E2F21; }
 
 /* ---------- Barre de tir ---------- */
 .barre-tir {
