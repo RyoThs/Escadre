@@ -22,6 +22,25 @@
   const PREFIXE = "escadre-v1-";
   const PING_MS = 3000;          // un battement toutes les 3 secondes
   const SILENCE_MAX_MS = 15000;  // sans nouvelles depuis 15 s = connexion morte
+  const OUVERTURE_MAX_MS = 15000; // invité : une connexion qui ne s'ouvre pas en 15 s est abandonnée puis relancée
+
+  /* Serveurs qui aident deux téléphones à se trouver malgré les box et les
+     réseaux 4G/5G :
+     - STUN : dit à chaque téléphone « voici ton adresse vue d'Internet »
+       (gratuit, plusieurs fournisseurs pour ne pas dépendre d'un seul) ;
+     - TURN : relais de secours quand la connexion directe est impossible
+       (ceux de PeerJS, gratuits).
+     Pour ajouter un relais personnel (ex. compte gratuit Metered), il suffit
+     d'ajouter une ligne dans RELAIS_PERSO : { urls: "turn:…", username: "…", credential: "…" }. */
+  const RELAIS_PERSO = [];
+  const SERVEURS_ICE = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+    { urls: "stun:stun.cloudflare.com:3478" },
+    { urls: ["turn:eu-0.turn.peerjs.com:3478", "turn:us-0.turn.peerjs.com:3478"], username: "peerjs", credential: "peerjsp" },
+  ].concat(RELAIS_PERSO);
+
+  // Message affiché quand la connexion directe échoue plusieurs fois de suite
+  const AIDE_CONNEXION = "Connexion difficile entre vos deux réseaux. Astuce : passez tous les deux en Wi-Fi (ou coupez le VPN), puis rouvrez l'appli.";
 
   /* --- Petit outil : un objet qui peut émettre des événements --- */
   function Emetteur() {
@@ -33,7 +52,9 @@
   }
 
   /* --- Faux PeerJS pour tester dans deux onglets (mode ?local=1) --- */
-  const PERTE_TEST = Math.min(0.9, Number(new URLSearchParams(location.search).get("perte")) || 0);
+  const PARAMS_TEST = new URLSearchParams(location.search);
+  const PERTE_TEST = Math.min(0.9, Number(PARAMS_TEST.get("perte")) || 0);
+  const BLOQUE_TEST = PARAMS_TEST.has("bloque"); // ?bloque=1 : simule deux réseaux qui n'arrivent pas à se parler
   function FauxPeer(id) {
     const moi = Object.assign(Emetteur(), { id: id || "local-" + Math.random().toString(36).slice(2, 9), open: false });
     const canal = new BroadcastChannel("escadre-local");
@@ -63,6 +84,7 @@
       if (m.a !== moi.id) return;
       const c = connexions[m.cid];
       if (m.type === "connect") {
+        if (BLOQUE_TEST) return;
         const conn = nouvelleConn(m.cid, m.de);
         moi.emit("connection", conn);
         conn.open = true;
@@ -81,7 +103,7 @@
       const cid = Math.random().toString(36).slice(2);
       const c = nouvelleConn(cid, distant);
       canal.postMessage({ type: "connect", cid, de: moi.id, a: distant });
-      setTimeout(() => { if (!c.open && connexions[cid]) { delete connexions[cid]; moi.emit("error", { type: "peer-unavailable" }); } }, 2500);
+      if (!BLOQUE_TEST) setTimeout(() => { if (!c.open && connexions[cid]) { delete connexions[cid]; moi.emit("error", { type: "peer-unavailable" }); } }, 2500);
       return c;
     };
     moi.reconnect = () => {};
@@ -96,7 +118,8 @@
     const local = new URLSearchParams(location.search).has("local");
     if (local) return FauxPeer(id);
     if (typeof Peer === "undefined") throw new Error("La bibliothèque réseau n'est pas chargée.");
-    return id ? new Peer(id, { debug: 0 }) : new Peer({ debug: 0 });
+    const options = { debug: 0, config: { iceServers: SERVEURS_ICE, sdpSemantics: "unified-plan" } };
+    return id ? new Peer(id, options) : new Peer(options);
   }
 
   /* ========================================================================
@@ -121,6 +144,8 @@
     let minuteurPing = null;
     let minuteurReco = null;
     let essais = 0;
+    let echecsDirects = 0;      // connexions qui n'ont jamais réussi à s'ouvrir
+    let echecsServeur = 0;      // serveur de rendez-vous injoignable
     let fini = false;
     let etatActuel = "";
 
@@ -202,7 +227,7 @@
     function demarrerHote() {
       etat("connexion");
       peer = creerPeer(idHote);
-      peer.on("open", () => { essais = 0; if (!conn) etat("attente"); });
+      peer.on("open", () => { essais = 0; echecsServeur = 0; if (!conn) etat("attente"); });
       peer.on("connection", (c) => {
         const validee = { ok: false };
         brancher(c, validee);
@@ -218,7 +243,8 @@
           if (essais < 20) { etat("connexion", "Le code se libère…"); detruirePeer(); planifierReconnexion(3000); }
           else etat("erreur", "Ce code de partie est déjà utilisé par quelqu'un d'autre.");
         } else if (["network", "server-error", "socket-error", "socket-closed"].includes(err.type)) {
-          etat("connexion", "Pas de réseau, nouvel essai…");
+          echecsServeur++;
+          etat("connexion", messageServeur());
           detruirePeer(); planifierReconnexion();
         } else if (err.type === "browser-incompatible") {
           etat("erreur", "Ce navigateur ne permet pas le jeu en ligne.");
@@ -231,27 +257,54 @@
       etat("connexion");
       peer = creerPeer(null);
       peer.on("open", () => {
+        echecsServeur = 0;
         // « json » : format le plus simple et le plus fiable entre iPhone et Android.
         const c = peer.connect(idHote, { reliable: true, serialization: "json" });
         const validee = { ok: true };
+        // Si la connexion directe ne s'ouvre jamais (réseaux trop fermés),
+        // PeerJS peut rester muet : on abandonne au bout de 15 s et on recommence.
+        const minuteurOuverture = setTimeout(() => echecOuverture(c), BLOQUE_TEST ? 3000 : OUVERTURE_MAX_MS);
+        let ouverte = false;
         c.on("open", () => {
-          conn = c; essais = 0; dernierSignal = Date.now(); accueilli = false;
+          ouverte = true;
+          clearTimeout(minuteurOuverture);
+          conn = c; essais = 0; echecsDirects = 0; dernierSignal = Date.now(); accueilli = false;
           surveiller();
           c.send(options.bonjour());
           etat("connecte");
         });
+        c.on("close", () => { clearTimeout(minuteurOuverture); if (!ouverte) echecOuverture(c); });
         brancher(c, validee);
       });
       peer.on("error", (err) => {
         if (fini) return;
         if (err.type === "peer-unavailable") etat("coupe", "Ton ami n'est pas joignable pour l'instant…");
         else if (err.type === "browser-incompatible") { etat("erreur", "Ce navigateur ne permet pas le jeu en ligne."); return; }
+        else if (["network", "server-error", "socket-error", "socket-closed"].includes(err.type)) { echecsServeur++; etat("coupe", messageServeur()); }
+        else if (err.type === "negotiation-failed" || err.type === "webrtc") { echecsDirects++; etat("coupe", messageDirect()); }
         else etat("coupe", "Réseau instable, nouvel essai…");
         detruirePeer(); planifierReconnexion();
       });
       peer.on("disconnected", () => {
         if (!conn && !fini) { detruirePeer(); planifierReconnexion(); }
       });
+    }
+
+    // Invité : la connexion vers l'hôte n'a jamais pu s'ouvrir
+    let derniereEchouee = null;
+    function echecOuverture(c) {
+      if (fini || conn || c === derniereEchouee || !peer) return;
+      derniereEchouee = c;
+      echecsDirects++;
+      try { c.close(); } catch (e) {}
+      etat("coupe", messageDirect());
+      detruirePeer(); planifierReconnexion();
+    }
+    function messageDirect() {
+      return echecsDirects >= 2 ? AIDE_CONNEXION : "La connexion ne s'établit pas, nouvel essai…";
+    }
+    function messageServeur() {
+      return echecsServeur >= 3 ? "Le serveur de rendez-vous ne répond pas. Vérifie ta connexion Internet." : "Pas de réseau, nouvel essai…";
     }
 
     function detruirePeer() {

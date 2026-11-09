@@ -89,4 +89,87 @@ test("discussion : texte trop long coupé, contenu non textuel refusé", () => {
   assert.strictEqual(D.ecrire(moi, "x".repeat(500)).texte.length, D.LONGUEUR_MAX);
   assert.strictEqual(D.recevoir(ami, { t: "chat", n: 0, texte: { pas: "du texte" } }), null);
 });
+// ---------- Ordinateur (mode solo) ----------
+const IA = require("../js/ia.js");
+// Hasard reproductible : les tests donnent toujours le même résultat
+function graine(n) { let x = n; return () => ((x = (x * 1103515245 + 12345) % 2147483648) / 2147483648); }
+
+function partieContreOrdi(niveau, rnd, regles) {
+  const flotte = R.placementAleatoire(regles, rnd);
+  const connu = new Array(100).fill(null);
+  const recus = [];
+  const coules = [];
+  for (let tir = 1; tir <= 100; tir++) {
+    const restants = R.FLOTTE.filter((f) => !coules.includes(f.id)).map((f) => f.taille);
+    const c = IA.choisirTir(niveau, connu, restants, regles, rnd);
+    assert.strictEqual(connu[c.y * 10 + c.x], null, "l'ordinateur ne tire jamais deux fois au même endroit");
+    const r = R.resoudreTir(flotte, recus, c.x, c.y);
+    recus.push({ x: c.x, y: c.y });
+    connu[c.y * 10 + c.x] = r.res === "eau" ? "eau" : "touche";
+    if (r.res === "coule") { coules.push(r.navire); r.cases.forEach((k) => (connu[k.y * 10 + k.x] = "coule")); }
+    if (r.fin) return tir;
+  }
+  throw new Error("partie non terminée");
+}
+test("ordinateur : chaque niveau finit toujours la partie, et le difficile est le plus fort", () => {
+  const moyennes = {};
+  for (const niveau of ["facile", "moyen", "difficile"]) {
+    let total = 0;
+    for (let i = 0; i < 40; i++) total += partieContreOrdi(niveau, graine(i + 1), { colles: i % 2 === 0 });
+    moyennes[niveau] = total / 40;
+  }
+  console.log("   tirs moyens pour gagner :", JSON.stringify(moyennes));
+  assert.ok(moyennes.difficile < moyennes.moyen, "difficile plus fort que moyen");
+  assert.ok(moyennes.moyen < moyennes.facile, "moyen plus fort que facile");
+  assert.ok(moyennes.difficile < 60, "difficile vraiment redoutable");
+});
+test("ordinateur : après un touché, il achève le navire", () => {
+  const connu = new Array(100).fill(null);
+  connu[4 * 10 + 4] = "touche";
+  for (const niveau of ["moyen", "difficile"]) {
+    const c = IA.choisirTir(niveau, connu, [5, 4, 3, 3, 2], {}, graine(3));
+    assert.strictEqual(Math.abs(c.x - 4) + Math.abs(c.y - 4), 1, niveau + " vise une case voisine");
+  }
+  connu[4 * 10 + 5] = "touche"; // deux touchés alignés à l'horizontale
+  const c = IA.choisirTir("moyen", connu, [5, 4, 3, 3, 2], {}, graine(4));
+  assert.ok(c.y === 4 && (c.x === 3 || c.x === 6), "il prolonge la ligne");
+});
+test("ordinateur : règle « navires séparés », il ne tire pas autour d'une épave", () => {
+  const connu = new Array(100).fill("eau");
+  connu[0] = "coule"; connu[1] = "coule";        // torpilleur coulé en A1-B1
+  connu[2] = null; connu[11] = null; connu[99] = null;
+  for (let i = 0; i < 20; i++) {
+    const c = IA.choisirTir("difficile", connu, [5], { colles: false }, graine(i + 10));
+    assert.deepStrictEqual(c, { x: 9, y: 9 });
+  }
+});
+
+// ---------- Scores et trophées ----------
+const TR = require("../js/trophees.js");
+test("trophées : score face à face et premiers trophées", () => {
+  const p = TR.initialiser({ victoires: 0, defaites: 0 });
+  const g = TR.enregistrerPartie(p, { gagne: true, tirs: 28, reussis: 17, mesCoules: 0, idAdverse: "ami1", nomAdverse: "Léa" }, 1);
+  assert.deepStrictEqual(g.sort(), ["eclair", "elite", "intouchable", "premiere"]);
+  TR.enregistrerPartie(p, { gagne: false, tirs: 60, reussis: 12, mesCoules: 5, idAdverse: "ami1", nomAdverse: "Léa" }, 2);
+  assert.deepStrictEqual(TR.score(p, "ami1"), { v: 1, d: 1 });
+  assert.strictEqual(p.serie, 0);
+  assert.deepStrictEqual(TR.enregistrerPartie(p, { gagne: true, tirs: 30, reussis: 17, mesCoules: 0, idAdverse: "ami1" }, 3), [], "un trophée ne se gagne qu'une fois");
+});
+test("trophées : série, sur le fil, amiral, fidèle, beau joueur", () => {
+  const p = TR.initialiser({});
+  TR.enregistrerPartie(p, { gagne: true, tirs: 70, reussis: 17, mesCoules: 4, idAdverse: "a" });
+  assert.ok(p.trophees.fil);
+  TR.enregistrerPartie(p, { gagne: true, tirs: 70, reussis: 17, mesCoules: 2, idAdverse: "ordinateur-difficile", solo: true, niveau: "difficile" });
+  assert.ok(p.trophees.amiral);
+  TR.enregistrerPartie(p, { gagne: true, tirs: 70, reussis: 17, mesCoules: 2, idAdverse: "a" });
+  assert.ok(p.trophees.serie3);
+  assert.strictEqual(p.meilleureSerie, 3);
+  for (let i = 0; i < 2; i++) TR.enregistrerPartie(p, { gagne: false, tirs: 70, reussis: 10, mesCoules: 5, idAdverse: "a" });
+  assert.ok(!p.trophees.fidele, "4 parties contre a : pas encore");
+  TR.enregistrerPartie(p, { gagne: false, tirs: 70, reussis: 10, mesCoules: 5, idAdverse: "a" });
+  assert.ok(p.trophees.fidele, "5 parties contre le même ami");
+  assert.deepStrictEqual(TR.beauJoueur(p), ["beau"]);
+  assert.deepStrictEqual(TR.beauJoueur(p), []);
+  assert.strictEqual(TR.duels(p).length, 2);
+});
 console.log(`\n${ok} tests réussis`);

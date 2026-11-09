@@ -61,10 +61,22 @@
       </div>
     </section>
 
+    <section class="carte">
+      <h2>Jouer seul</h2>
+      <p class="petit">Entraîne-toi contre l'ordinateur, même sans réseau.</p>
+      <div id="choix-niveau" class="choix-niveau" role="group" aria-label="Niveau de l'ordinateur">
+        <button type="button" data-niveau="facile">Facile</button>
+        <button type="button" data-niveau="moyen">Moyen</button>
+        <button type="button" data-niveau="difficile">Difficile</button>
+      </div>
+      <button id="btn-solo" class="btn btn-secondaire">Jouer contre l'ordinateur</button>
+    </section>
+
     <footer class="pied">
       <p id="stats" class="petit"></p>
+      <button id="btn-palmares" class="btn btn-fantome btn-palmares">🏆 Palmarès et trophées</button>
       <button class="lien" data-ouvrir="fenetre-regles">Les règles du jeu</button>
-      <p class="petit discret" id="hors-ligne" hidden>Pas d'Internet : le jeu à deux a besoin du réseau.</p>
+      <p class="petit discret" id="hors-ligne" hidden>Pas d'Internet : le jeu à deux a besoin du réseau. Le mode solo, lui, marche toujours.</p>
     </footer>
   </main>
 
@@ -97,10 +109,23 @@
       <p class="petit discret">Tu peux placer ta flotte en attendant.</p>
     </section>
 
+    <!-- Aide quand la connexion avec l'ami ne revient pas -->
+    <section id="aide-connexion" class="carte aide-connexion" hidden role="status">
+      <h2>Ça ne se connecte pas ?</h2>
+      <p id="aide-detail" class="petit"></p>
+      <ul class="petit">
+        <li>Vérifiez que vous avez <strong>tous les deux</strong> Internet.</li>
+        <li>Essayez en <strong>Wi-Fi</strong> : certains réseaux 4G/5G bloquent les jeux en direct.</li>
+        <li>Coupez un éventuel <strong>VPN</strong> ou bloqueur.</li>
+        <li>Fermez puis rouvrez l'appli : la partie reprend où elle en était.</li>
+      </ul>
+    </section>
+
     <!-- Bandeau principal : consignes / à qui le tour -->
     <section id="bandeau" class="bandeau">
       <p id="bandeau-titre" class="bandeau-titre">Place ta flotte</p>
       <p id="bandeau-detail" class="bandeau-detail"></p>
+      <p id="score-duel" class="score-duel" hidden></p>
     </section>
 
     <!-- Grille adverse (pendant la bataille) -->
@@ -157,10 +182,51 @@
       <div><strong id="fin-precision">0 %</strong><span>précision</span></div>
       <div><strong id="fin-coules">0</strong><span>coulés</span></div>
     </div>
+    <p id="fin-score" class="score-duel"></p>
+    <ul id="fin-trophees" class="liste-trophees nouveaux" hidden></ul>
     <p id="fin-honnetete" class="petit"></p>
     <button id="btn-revanche" class="btn btn-principal">Revanche</button>
+    <button id="btn-replay" class="btn btn-secondaire">🎬 Revoir la partie</button>
     <button id="btn-voir" class="btn btn-fantome">Voir les grilles</button>
     <button id="btn-accueil" class="btn btn-fantome">Retour à l'accueil</button>
+  </dialog>
+
+  <!-- Replay : la partie rejouée coup par coup -->
+  <dialog id="fenetre-replay" class="fenetre replay">
+    <header class="chat-tete">
+      <h2>Replay</h2>
+      <span id="replay-compteur" class="petit"></span>
+      <button class="btn-icone" data-fermer aria-label="Fermer">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div class="replay-grilles">
+      <div><p class="replay-titre">Ta flotte</p><div id="replay-moi" class="grille mini"></div></div>
+      <div><p class="replay-titre" id="replay-titre-lui">Sa flotte</p><div id="replay-lui" class="grille mini"></div></div>
+    </div>
+    <p id="replay-legende" class="replay-legende" aria-live="polite"></p>
+    <input type="range" id="replay-curseur" class="replay-curseur" min="0" max="0" value="0" aria-label="Position dans la partie">
+    <div class="replay-commandes">
+      <button id="replay-debut" class="btn btn-fantome" aria-label="Début">⏮</button>
+      <button id="replay-precedent" class="btn btn-fantome" aria-label="Coup précédent">◀</button>
+      <button id="replay-lecture" class="btn btn-principal">▶ Lecture</button>
+      <button id="replay-suivant" class="btn btn-fantome" aria-label="Coup suivant">▶</button>
+    </div>
+  </dialog>
+
+  <!-- Palmarès -->
+  <dialog id="fenetre-palmares" class="fenetre fenetre-longue">
+    <h2>Palmarès</h2>
+    <div class="stats-fin">
+      <div><strong id="pal-parties">0</strong><span>parties</span></div>
+      <div><strong id="pal-victoires">0</strong><span>victoires</span></div>
+      <div><strong id="pal-serie">0</strong><span>meilleure série</span></div>
+    </div>
+    <h3 class="sous-partie">Face à face</h3>
+    <ul id="liste-duels" class="liste-duels"></ul>
+    <h3 class="sous-partie">Trophées <span id="compte-trophees" class="petit"></span></h3>
+    <ul id="liste-trophees" class="liste-trophees"></ul>
+    <button class="btn btn-principal" data-fermer>Fermer</button>
   </dialog>
 
   <!-- Discussion avec l'ami -->
@@ -220,6 +286,8 @@
   <script src="js/regles.js"></script>
   <script src="js/navires.js"></script>
   <script src="js/discussion.js"></script>
+  <script src="js/trophees.js"></script>
+  <script src="js/ia.js"></script>
   <script src="js/sons.js"></script>
   <script src="js/reseau.js"></script>
   <script src="js/app.js"></script>

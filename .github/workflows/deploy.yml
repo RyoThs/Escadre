@@ -1,5 +1,6 @@
 # Déploiement automatique : à chaque envoi (push) sur main,
-# 1) on lance les tests des règles, 2) on publie le site sur GitHub Pages.
+# 1) on lance les tests des règles, 2) on joue de vraies parties dans un
+# navigateur automatique, 3) si tout est vert, on publie le site sur GitHub Pages.
 name: Tester et publier
 
 on:
@@ -27,8 +28,23 @@ jobs:
       - name: Tests des règles
         run: node tests/regles.test.js
 
+  parties:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Installer le navigateur automatique (Playwright + Chromium)
+        run: |
+          npm install --no-save --no-package-lock playwright@1.63.0
+          npx playwright install --with-deps chromium
+      - name: Jouer des parties complètes (solo, à deux, connexion coupée)
+        run: node tests/e2e/escadre.e2e.js
+
   publier:
-    needs: tests            # pas de publication si un test échoue
+    needs: [tests, parties]  # pas de publication si un test échoue
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -13,6 +13,7 @@
   const R = window.Regles;
   const CLE_PARTIE = "escadre.partie.v1";
   const CLE_PROFIL = "escadre.profil.v1";
+  const CLE_ORDI = "escadre.ordinateur.v1";   // mémoire de l'ordinateur (mode solo)
   const DUREE_REPRISE = 3 * 24 * 3600 * 1000; // une partie se reprend jusqu'à 3 jours
 
   const $ = (s) => document.querySelector(s);
@@ -37,7 +38,10 @@
     return Array.from(tab, (v) => alphabet[v % alphabet.length]).join("");
   }
 
-  const profil = Object.assign({ nom: "", son: true, victoires: 0, defaites: 0, jeton: aleatoire(16) }, lire(CLE_PROFIL) || {});
+  // jeton : secret qui permet de revenir dans sa partie ; id : identifiant public
+  // (sert à tenir le score face à chaque ami).
+  const profil = Object.assign({ nom: "", son: true, victoires: 0, defaites: 0, jeton: aleatoire(16), id: aleatoire(10), niveau: "moyen" }, lire(CLE_PROFIL) || {});
+  Trophees.initialiser(profil);
   ecrire(CLE_PROFIL, profil);
   Sons.regler(profil.son);
 
@@ -45,7 +49,7 @@
   if (P && Date.now() - (P.maj || 0) > DUREE_REPRISE) { P = null; effacer(CLE_PARTIE); }
 
   let liaison = null;
-  const ui = { selection: null, horizontal: true, visee: null, reseau: "connexion", detailReseau: "", accueil: false, nonLus: 0 };
+  const ui = { selection: null, horizontal: true, visee: null, reseau: "connexion", detailReseau: "", accueil: false, nonLus: 0, depuisCoupure: Date.now() };
 
   function sauver() {
     if (!P) return;
@@ -91,6 +95,20 @@
     lancer();
   }
 
+  // Mode solo : l'ordinateur prend la place de l'ami (voir js/ia.js)
+  function creerPartieSolo() {
+    abandonner();
+    profil.nom = nomJoueur(); sauverProfil();
+    const niveau = IA.NIVEAUX[profil.niveau] ? profil.niveau : "moyen";
+    effacer(CLE_ORDI);
+    P = Object.assign(
+      { role: "hote", code: "SOLO", solo: { niveau }, jetonInvite: "ordinateur-" + niveau, nomAdverse: IA.NIVEAUX[niveau].nom, adversaireParti: false },
+      champsDePartie(aleatoire(8), Math.random() < 0.5 ? "hote" : "invite", { colles: true })
+    );
+    sauver();
+    lancer();
+  }
+
   function rejoindrePartie(code) {
     code = (code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
     if (code.length !== 5) { toast("Le code fait 5 caractères."); return; }
@@ -105,11 +123,29 @@
   function lancer() {
     if (liaison) liaison.fermer();
     Discussion.initialiser(P);
-    ui.selection = null; ui.visee = null; ui.accueil = false;
+    ui.selection = null; ui.visee = null; ui.accueil = false; ui.depuisCoupure = Date.now();
+    const surEtat = (etat, detail) => {
+      ui.reseau = etat; ui.detailReseau = detail || "";
+      if (etat === "connecte") ui.depuisCoupure = null; else if (!ui.depuisCoupure) ui.depuisCoupure = Date.now();
+      afficher();
+    };
+    if (P.solo) {
+      liaison = IA.LiaisonSolo({
+        niveau: P.solo.niveau,
+        rapide: estLocal() && new URLSearchParams(location.search).has("vite"), // tests automatiques
+        lireOrdinateur: () => lire(CLE_ORDI),
+        ecrireOrdinateur: (e) => ecrire(CLE_ORDI, e),
+        surMessage: recevoir,
+        battement: () => { if (P) envoyerEtat(); },
+        surEtat,
+      });
+      afficher();
+      return;
+    }
     liaison = Reseau.Liaison({
       role: P.role,
       code: P.code,
-      bonjour: () => ({ t: "bonjour", jeton: profil.jeton, nom: profil.nom, partieId: P.partieId }),
+      bonjour: () => ({ t: "bonjour", jeton: profil.jeton, id: profil.id, nom: profil.nom, partieId: P.partieId }),
       accepter: (msg) => {
         if (typeof msg.jeton !== "string") return false;
         if (!P.jetonInvite || P.jetonInvite === msg.jeton) return true; // le même ami revient
@@ -124,7 +160,7 @@
       },
       surMessage: recevoir,
       battement: () => { if (P) envoyerEtat(); }, // toutes les 3 s : rattrape les messages perdus
-      surEtat: (etat, detail) => { ui.reseau = etat; ui.detailReseau = detail || ""; afficher(); },
+      surEtat,
     });
     if (P.role === "invite" && history.replaceState) history.replaceState(null, "", location.pathname + (estLocal() ? "?local=1" : ""));
     afficher();
@@ -133,7 +169,7 @@
   function quitter() {
     abandonner();
     P = null;
-    effacer(CLE_PARTIE);
+    effacer(CLE_PARTIE); effacer(CLE_ORDI);
     fermerFenetres();
     afficher();
   }
@@ -144,7 +180,7 @@
   function envoyer(msg) { if (liaison) liaison.envoyer(msg); }
 
   function envoyerEtat() {
-    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom, aSaFlotte: !!P.flotteAdverse, chatRecus: P.chatRecus });
+    envoyer({ t: "etat", partieId: P.partieId, pret: P.pret, nom: profil.nom, id: profil.id, aSaFlotte: !!P.flotteAdverse, chatRecus: P.chatRecus });
   }
 
   function envoyerFlotte() {
@@ -156,6 +192,7 @@
      ------------------------------------------------------------------ */
   const entier = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
   const texte = (v) => (typeof v === "string" ? v.slice(0, 16) : "");
+  const identifiant = (v) => (typeof v === "string" && /^[\w-]{4,24}$/.test(v) ? v : null);
 
   function recevoir(msg) {
     if (!P) return;
@@ -164,13 +201,15 @@
         P.jetonInvite = msg.jeton;
         if (!P.nomAdverse) toast(texte(msg.nom) + " a rejoint la partie !");
         P.nomAdverse = texte(msg.nom) || "Ton ami";
+        if (identifiant(msg.id)) P.idAdverse = identifiant(msg.id);
         P.adversaireParti = false;
-        envoyer({ t: "bienvenue", partieId: P.partieId, premier: P.premier, regles: P.regles, nom: profil.nom });
+        envoyer({ t: "bienvenue", partieId: P.partieId, premier: P.premier, regles: P.regles, nom: profil.nom, id: profil.id });
         envoyerEtat();
         break;
 
       case "bienvenue": // (invité) l'hôte nous donne les infos de la partie
         P.nomAdverse = texte(msg.nom) || "Ton ami";
+        if (identifiant(msg.id)) P.idAdverse = identifiant(msg.id);
         P.adversaireParti = false;
         if (msg.partieId !== P.partieId) {
           Object.assign(P, champsDePartie(String(msg.partieId), msg.premier === "hote" ? "hote" : "invite", { colles: !(msg.regles && msg.regles.colles === false) }));
@@ -196,14 +235,15 @@
         if (msg.partieId !== P.partieId) {
           // Pas la même partie des deux côtés (un message s'est perdu) : on resynchronise.
           if (P.role === "hote") {
-            envoyer({ t: "bienvenue", partieId: P.partieId, premier: P.premier, regles: P.regles, nom: profil.nom });
+            envoyer({ t: "bienvenue", partieId: P.partieId, premier: P.premier, regles: P.regles, nom: profil.nom, id: profil.id });
             envoyerEtat();
           } else {
-            envoyer({ t: "bonjour", jeton: profil.jeton, nom: profil.nom, partieId: P.partieId });
+            envoyer({ t: "bonjour", jeton: profil.jeton, id: profil.id, nom: profil.nom, partieId: P.partieId });
           }
           return;
         }
         if (msg.nom) P.nomAdverse = texte(msg.nom);
+        if (identifiant(msg.id)) P.idAdverse = identifiant(msg.id);
         const avant = P.adversairePret, phaseAvant = P.phase;
         if (msg.pret && !P.adversairePret && P.phase === "placement") toast(P.nomAdverse + " est prêt !");
         P.adversairePret = !!msg.pret;
@@ -332,6 +372,11 @@
 
     const lieu = R.nomCase(msg.x, msg.y);
     ui.impactMoi = msg.n;
+    setTimeout(() => {
+      effet(caseMoi(msg.x, msg.y), r.res === "eau" ? "gerbe" : "explosion");
+      if (r.res !== "eau") secouer($("#grille-moi"));
+      if (r.res === "coule") r.cases.forEach((c, i) => setTimeout(() => effet(caseMoi(c.x, c.y), "explosion"), 120 * (i + 1)));
+    }, 0);
     if (r.fin) {
       terminer("lui");
     } else if (r.res === "coule") {
@@ -354,6 +399,12 @@
 
     t.res = msg.res;
     ui.impactAdverse = msg.n;
+    setTimeout(() => {
+      effet(caseAdverse(t.x, t.y), msg.res === "eau" ? "gerbe" : "explosion");
+      if (msg.res === "coule" && Array.isArray(msg.cases)) msg.cases.forEach((c, i) => {
+        if (c && entier(c.x, 0, 9) && entier(c.y, 0, 9)) setTimeout(() => effet(caseAdverse(c.x, c.y), "explosion"), 120 * (i + 1));
+      });
+    }, 0);
     if (msg.res === "coule" && R.infoNavire(msg.navire) && Array.isArray(msg.cases)) {
       t.navire = msg.navire;
       const cases = msg.cases.filter((c) => c && entier(c.x, 0, 9) && entier(c.y, 0, 9)).map((c) => ({ x: c.x, y: c.y }));
@@ -377,7 +428,17 @@
     P.gagnant = gagnant;
     if (!P.compte) {
       P.compte = true;
-      if (gagnant === "moi") profil.victoires++; else profil.defaites++;
+      const tirs = P.tirsEnvoyes.filter((t) => t.res !== null);
+      P.nouveauxTrophees = Trophees.enregistrerPartie(profil, {
+        gagne: gagnant === "moi",
+        tirs: tirs.length,
+        reussis: tirs.filter((t) => t.res !== "eau").length,
+        mesCoules: P.tirsRecus.filter((t) => t.res === "coule").length,
+        idAdverse: idDuel(),
+        nomAdverse: P.nomAdverse,
+        solo: !!P.solo,
+        niveau: P.solo ? P.solo.niveau : null,
+      });
       sauverProfil();
     }
     envoyerFlotte();
@@ -387,7 +448,17 @@
     setTimeout(ouvrirFin, 1600);
   }
 
+  // Clé du score face à face : l'identifiant de l'ami (ou son nom pour une ancienne version)
+  function idDuel() {
+    if (P.solo) return "ordinateur-" + P.solo.niveau;
+    return P.idAdverse || (P.nomAdverse ? "nom-" + P.nomAdverse.toLowerCase() : null);
+  }
+
   function demanderRevanche() {
+    if (P.gagnant === "lui" && !P.veuxRevanche) {
+      const gagnes = Trophees.beauJoueur(profil);
+      if (gagnes.length) { sauverProfil(); toast("Trophée débloqué : " + Trophees.parId("beau").icone + " " + Trophees.parId("beau").nom); }
+    }
     P.veuxRevanche = true;
     envoyer({ t: "revanche", partieId: P.partieId });
     if (P.role === "hote" && P.ilVeutRevanche) lancerRevanche();
@@ -499,11 +570,12 @@
     for (let y = 0; y < R.TAILLE; y++) {
       const s = document.createElement("span"); s.className = "repere"; s.textContent = y + 1; placer(s, 1, y + 2);
       for (let x = 0; x < R.TAILLE; x++) {
-        const b = document.createElement("button");
+        // Grille juste pour regarder (replay) : de simples cases, pas des boutons
+        const b = document.createElement(auToucher ? "button" : "span");
         b.style.gridColumn = x + 2; b.style.gridRow = y + 2;
-        b.className = "case"; b.type = "button";
+        b.className = "case";
         b.setAttribute("aria-label", R.nomCase(x, y));
-        b.addEventListener("click", () => { Sons.debloquer(); auToucher(x, y); });
+        if (auToucher) { b.type = "button"; b.addEventListener("click", () => { Sons.debloquer(); auToucher(x, y); }); }
         el.appendChild(b);
         cases.push(b);
       }
@@ -547,6 +619,9 @@
     $("#bloc-reprendre").hidden = !P;
     const v = profil.victoires, d = profil.defaites;
     $("#stats").textContent = v + d > 0 ? `Ton palmarès : ${v} victoire${v > 1 ? "s" : ""}, ${d} défaite${d > 1 ? "s" : ""}` : "";
+    const nbTrophees = Object.keys(profil.trophees).length;
+    $("#btn-palmares").textContent = "🏆 Palmarès et trophées" + (nbTrophees ? ` (${nbTrophees}/${Trophees.LISTE.length})` : "");
+    document.querySelectorAll("#choix-niveau button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.niveau === profil.niveau)));
     $("#hors-ligne").hidden = navigator.onLine;
   }
 
@@ -554,6 +629,13 @@
     const pastille = $("#pastille");
     let txt;
     pastille.className = "pastille";
+    if (P.solo) {
+      pastille.classList.add("ok");
+      $("#texte-reseau").textContent = "Partie solo · " + IA.NIVEAUX[P.solo.niveau].titre;
+      $("#bloc-invitation").hidden = true;
+      $("#aide-connexion").hidden = true;
+      return;
+    }
     if (P.adversaireParti) { txt = P.nomAdverse + " a quitté la partie"; pastille.classList.add("ko"); }
     else if (ui.reseau === "connecte") { txt = "En ligne avec " + (P.nomAdverse || "ton ami"); pastille.classList.add("ok"); }
     else if (ui.reseau === "attente") txt = P.nomAdverse ? "En attente du retour de " + P.nomAdverse + "…" : "En attente de ton ami…";
@@ -565,10 +647,28 @@
     const invitation = P.role === "hote" && !P.jetonInvite;
     $("#bloc-invitation").hidden = !invitation;
     $("#code-partie").textContent = P.code;
+
+    // Aide : la connexion avec l'ami ne revient pas depuis plus de 20 s
+    const bloque = !invitation && !P.adversaireParti && P.phase !== "fin" && ui.reseau !== "connecte" &&
+      ui.depuisCoupure && Date.now() - ui.depuisCoupure > 20000;
+    $("#aide-connexion").hidden = !bloque;
+    if (bloque) $("#aide-detail").textContent = ui.detailReseau || "On réessaie automatiquement…";
+  }
+
+  // « Toi 3 – 2 Lucas » : le score face à face, gardé d'une partie à l'autre
+  function texteScore() {
+    const id = idDuel();
+    if (!id) return "";
+    const sc = Trophees.score(profil, id);
+    if (sc.v + sc.d === 0) return "";
+    return `Toi ${sc.v} – ${sc.d} ${P.nomAdverse || "ton ami"}`;
   }
 
   function afficherBandeau() {
     const titre = $("#bandeau-titre"), detail = $("#bandeau-detail"), bandeau = $("#bandeau");
+    const score = texteScore();
+    $("#score-duel").hidden = !score || P.phase === "jeu";
+    $("#score-duel").textContent = score;
     bandeau.classList.toggle("mon-tour", monTour());
     const autre = P.nomAdverse || "ton ami";
     if (P.phase === "arrivee") { titre.textContent = "Connexion à la partie"; detail.textContent = "Code " + P.code; }
@@ -714,6 +814,20 @@
     $("#fin-precision").textContent = (tirs.length ? Math.round((100 * reussis) / tirs.length) : 0) + " %";
     $("#fin-coules").textContent = P.coulesAdverses.length + "/5";
     $("#fin-honnetete").textContent = verifierHonnetete();
+    $("#fin-score").textContent = texteScore();
+    const liste = $("#fin-trophees");
+    liste.innerHTML = "";
+    (P.nouveauxTrophees || []).forEach((id) => {
+      const t = Trophees.parId(id);
+      if (!t) return;
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="trophee-icone"></span><span><strong></strong><small></small></span>`;
+      li.querySelector(".trophee-icone").textContent = t.icone;
+      li.querySelector("strong").textContent = "Trophée débloqué : " + t.nom;
+      li.querySelector("small").textContent = t.desc;
+      liste.appendChild(li);
+    });
+    liste.hidden = !liste.children.length;
     const btn = $("#btn-revanche");
     btn.disabled = P.veuxRevanche || P.adversaireParti;
     btn.textContent = P.veuxRevanche ? "En attente de " + P.nomAdverse + "…" : P.ilVeutRevanche ? "Accepter la revanche" : "Revanche";
@@ -778,6 +892,143 @@
     afficherChat(true);
   }
 
+  /* ------------------------------------------------------------------
+     Effets de tir : gerbe d'eau (raté) ou explosion (touché)
+     ------------------------------------------------------------------ */
+  function effet(el, type) {
+    if (!el) return;
+    const s = document.createElement("span");
+    s.className = "effet " + type;
+    el.style.zIndex = 4; // au-dessus des cases voisines le temps de l'animation
+    el.appendChild(s);
+    setTimeout(() => { s.remove(); if (!el.querySelector(".effet")) el.style.zIndex = ""; }, 900);
+  }
+  function secouer(el) { el.classList.remove("choc"); void el.offsetWidth; el.classList.add("choc"); }
+
+  /* ------------------------------------------------------------------
+     Replay : on rejoue la partie coup par coup, les deux flottes visibles
+     ------------------------------------------------------------------ */
+  const caseReplayMoi = construireGrille($("#replay-moi"), null);
+  const caseReplayLui = construireGrille($("#replay-lui"), null);
+  const replay = { seq: [], pos: 0, minuteur: null };
+
+  // Ordre réel des tirs : le premier joueur tire, puis l'autre, et ainsi de suite.
+  function sequenceReplay() {
+    const seq = [];
+    const n = Math.max(P.tirsEnvoyes.length, P.tirsRecus.length);
+    for (let i = 0; i < n; i++) {
+      const a = { qui: "moi", t: P.tirsEnvoyes[i] }, b = { qui: "lui", t: P.tirsRecus[i] };
+      (jeSuisPremier() ? [a, b] : [b, a]).forEach((e) => { if (e.t && e.t.res) seq.push(e); });
+    }
+    return seq;
+  }
+
+  function dessinerReplay() {
+    const k = replay.pos, seq = replay.seq.slice(0, k);
+    const grilles = [
+      { el: $("#replay-moi"), c: caseReplayMoi, qui: "lui", flotte: P.navires },
+      { el: $("#replay-lui"), c: caseReplayLui, qui: "moi", flotte: P.flotteAdverse && P.flotteAdverse.length ? P.flotteAdverse : null },
+    ];
+    grilles.forEach((g) => {
+      for (let y = 0; y < R.TAILLE; y++) for (let x = 0; x < R.TAILLE; x++) g.c(x, y).className = "case";
+      g.el.querySelectorAll(".silhouette").forEach((e) => e.remove());
+      const tirs = seq.filter((e) => e.qui === g.qui).map((e) => e.t);
+      const coules = new Set(tirs.filter((t) => t.res === "coule").map((t) => t.navire));
+      if (g.flotte) {
+        g.flotte.forEach((n) => {
+          g.el.appendChild(Navires.element(n, R.infoNavire(n.id).taille, coules.has(n.id) ? "coule" : g.qui === "moi" ? "revele" : ""));
+          R.casesDe(n).forEach((c) => {
+            g.c(c.x, c.y).classList.add("nav");
+            if (coules.has(n.id)) g.c(c.x, c.y).classList.add("coule");
+          });
+        });
+      } else {
+        // Flotte de l'ami inconnue : seulement ses épaves
+        P.coulesAdverses.filter((c) => coules.has(c.id) && c.cases.length).forEach((c) => {
+          const xs = c.cases.map((q) => q.x), ys = c.cases.map((q) => q.y);
+          g.el.appendChild(Navires.element({ id: c.id, x: Math.min(...xs), y: Math.min(...ys), h: new Set(ys).size === 1 }, R.infoNavire(c.id).taille, "coule"));
+          c.cases.forEach((q) => g.c(q.x, q.y).classList.add("nav", "coule"));
+        });
+      }
+      tirs.forEach((t) => g.c(t.x, t.y).classList.add(t.res === "eau" ? "eau" : "touche"));
+    });
+    const dernier = seq[k - 1];
+    let legende = "Début de la partie";
+    if (dernier) {
+      const cible = (dernier.qui === "moi" ? caseReplayLui : caseReplayMoi)(dernier.t.x, dernier.t.y);
+      cible.classList.add("dernier");
+      effet(cible, dernier.t.res === "eau" ? "gerbe" : "explosion");
+      const res = { eau: "à l'eau", touche: "touché", coule: "coulé !" }[dernier.t.res];
+      legende = (dernier.qui === "moi" ? "Toi" : P.nomAdverse) + " tire en " + R.nomCase(dernier.t.x, dernier.t.y) + " : " + res;
+    }
+    $("#replay-compteur").textContent = `Coup ${k} / ${replay.seq.length}`;
+    $("#replay-legende").textContent = legende;
+    $("#replay-curseur").max = replay.seq.length;
+    $("#replay-curseur").value = k;
+    $("#replay-lecture").textContent = replay.minuteur ? "⏸ Pause" : k >= replay.seq.length ? "↺ Revoir" : "▶ Lecture";
+  }
+
+  function allerReplay(pos) {
+    replay.pos = Math.max(0, Math.min(replay.seq.length, pos));
+    if (replay.pos >= replay.seq.length) arreterReplay();
+    dessinerReplay();
+  }
+  function arreterReplay() { clearInterval(replay.minuteur); replay.minuteur = null; }
+  function lectureReplay() {
+    if (replay.minuteur) { arreterReplay(); dessinerReplay(); return; }
+    if (replay.pos >= replay.seq.length) replay.pos = 0;
+    replay.minuteur = setInterval(() => allerReplay(replay.pos + 1), 650);
+    allerReplay(replay.pos + 1);
+  }
+  function ouvrirReplay() {
+    fermerFenetres();
+    replay.seq = sequenceReplay();
+    replay.pos = 0;
+    $("#replay-titre-lui").textContent = "Flotte de " + (P.nomAdverse || "ton ami");
+    $("#fenetre-replay").showModal();
+    dessinerReplay();
+    lectureReplay();
+  }
+
+  /* ------------------------------------------------------------------
+     Palmarès : scores face à face et trophées
+     ------------------------------------------------------------------ */
+  function ouvrirPalmares() {
+    $("#pal-parties").textContent = profil.parties;
+    $("#pal-victoires").textContent = profil.victoires;
+    $("#pal-serie").textContent = profil.meilleureSerie;
+    const duels = $("#liste-duels");
+    duels.innerHTML = "";
+    const liste = Trophees.duels(profil);
+    if (!liste.length) {
+      const li = document.createElement("li"); li.className = "vide"; li.textContent = "Aucune partie terminée pour l'instant.";
+      duels.appendChild(li);
+    }
+    liste.forEach((d) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span class="duel-nom"></span><span class="duel-score"></span>`;
+      li.querySelector(".duel-nom").textContent = (d.id.startsWith("ordinateur-") ? "🤖 " : "") + (d.nom || "Ami");
+      li.querySelector(".duel-score").textContent = `${d.v} – ${d.d}`;
+      if (d.v > d.d) li.classList.add("devant"); else if (d.v < d.d) li.classList.add("derriere");
+      duels.appendChild(li);
+    });
+    const tr = $("#liste-trophees");
+    tr.innerHTML = "";
+    Trophees.LISTE.forEach((t) => {
+      const li = document.createElement("li");
+      const obtenu = profil.trophees[t.id];
+      li.className = obtenu ? "obtenu" : "verrouille";
+      li.innerHTML = `<span class="trophee-icone"></span><span><strong></strong><small></small></span>`;
+      li.querySelector(".trophee-icone").textContent = obtenu ? t.icone : "🔒";
+      li.querySelector("strong").textContent = t.nom;
+      li.querySelector("small").textContent = t.desc + (obtenu ? " · " + new Date(obtenu).toLocaleDateString("fr-FR") : "");
+      tr.appendChild(li);
+    });
+    $("#compte-trophees").textContent = `${Object.keys(profil.trophees).length}/${Trophees.LISTE.length}`;
+    $("#fenetre-palmares").showModal();
+    $("#fenetre-palmares").scrollTop = 0; // on commence en haut de la liste
+  }
+
   let minuteurAnnonce;
   function annonce(titre, sousTitre, classe) {
     const a = $("#annonce");
@@ -834,6 +1085,13 @@
   $("#champ-nom").value = profil.nom;
   $("#champ-nom").addEventListener("change", () => { profil.nom = nomJoueur(); sauverProfil(); });
   $("#btn-creer").addEventListener("click", () => { Sons.debloquer(); creerPartie(); });
+  $("#btn-solo").addEventListener("click", () => { Sons.debloquer(); creerPartieSolo(); });
+  $("#choix-niveau").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-niveau]");
+    if (!b) return;
+    profil.niveau = b.dataset.niveau; sauverProfil(); afficherAccueil();
+  });
+  $("#btn-palmares").addEventListener("click", ouvrirPalmares);
   $("#btn-rejoindre").addEventListener("click", () => { Sons.debloquer(); rejoindrePartie($("#champ-code").value); });
   $("#champ-code").addEventListener("keydown", (e) => { if (e.key === "Enter") rejoindrePartie(e.target.value); });
   $("#champ-code").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""); });
@@ -872,6 +1130,13 @@
   $("#btn-quitter-oui").addEventListener("click", quitter);
   $("#btn-revanche").addEventListener("click", demanderRevanche);
   $("#btn-voir").addEventListener("click", () => $("#fenetre-fin").close());
+  $("#btn-replay").addEventListener("click", ouvrirReplay);
+  $("#replay-lecture").addEventListener("click", lectureReplay);
+  $("#replay-debut").addEventListener("click", () => { arreterReplay(); allerReplay(0); });
+  $("#replay-precedent").addEventListener("click", () => { arreterReplay(); allerReplay(replay.pos - 1); });
+  $("#replay-suivant").addEventListener("click", () => { arreterReplay(); allerReplay(replay.pos + 1); });
+  $("#replay-curseur").addEventListener("input", (e) => { arreterReplay(); allerReplay(Number(e.target.value)); });
+  $("#fenetre-replay").addEventListener("close", arreterReplay);
   $("#btn-accueil").addEventListener("click", quitter);
 
   document.querySelectorAll("[data-ouvrir]").forEach((b) => b.addEventListener("click", () => {
@@ -883,6 +1148,8 @@
   document.addEventListener("visibilitychange", () => { if (!document.hidden && liaison) liaison.verifier(); });
   window.addEventListener("online", () => { if (liaison) liaison.verifier(); afficher(); });
   window.addEventListener("offline", afficher);
+  // Toutes les 5 s, si l'ami est injoignable, on met à jour le statut (et l'aide si ça dure)
+  setInterval(() => { if (P && !ui.accueil && !P.solo && ui.reseau !== "connecte") afficherReseau(); }, 5000);
 
   /* ------------------------------------------------------------------
      Démarrage

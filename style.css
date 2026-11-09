@@ -322,6 +322,77 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 .stats-fin strong { font: 700 26px var(--serif); }
 .stats-fin span { font-size: 12px; color: var(--encre-douce); text-transform: uppercase; letter-spacing: 1px; }
 
+/* ---------- Mode solo : choix du niveau ---------- */
+.choix-niveau { display: flex; background: var(--eau); border-radius: 12px; padding: 4px; gap: 4px; }
+.choix-niveau button { flex: 1; min-height: 40px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; font-size: 15px; color: var(--encre-douce); }
+.choix-niveau button[aria-pressed="true"] { background: var(--carte); color: var(--encre); box-shadow: 0 1px 3px rgba(23, 40, 74, .18); }
+.btn-palmares { min-height: 44px; padding: 8px 16px; font-size: 15px; }
+
+/* ---------- Aide à la connexion ---------- */
+.aide-connexion { border-color: #F1B4A9; background: #FFF6F3; }
+.aide-connexion h2 { font-size: 18px; }
+.aide-connexion ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+
+/* ---------- Score face à face ---------- */
+.score-duel { margin: 6px auto 0; font: 600 15px var(--serif); letter-spacing: .5px; color: var(--encre);
+  background: var(--sable); border-radius: 999px; padding: 3px 14px; width: fit-content; }
+.fenetre .score-duel:empty { display: none; }
+
+/* ---------- Effets de tir ---------- */
+.effet { position: absolute; inset: -60%; pointer-events: none; border-radius: 50%; z-index: 3; }
+/* gerbe d'eau : deux anneaux qui s'élargissent + gouttelettes */
+.effet.gerbe { border: 2px solid rgba(70, 130, 180, .75); animation: anneau .7s ease-out forwards; }
+.effet.gerbe::before, .effet.gerbe::after { content: ""; position: absolute; border-radius: 50%; }
+.effet.gerbe::before { inset: 25%; border: 2px solid rgba(70, 130, 180, .55); animation: anneau .7s .12s ease-out both; }
+.effet.gerbe::after { left: 50%; top: 50%; width: 4px; height: 4px; background: #5B9BC8; margin: -2px;
+  box-shadow: 0 -10px 0 #5B9BC8, 9px -5px 0 #8BBEE0, -9px -5px 0 #8BBEE0, 6px 8px 0 #5B9BC8, -6px 8px 0 #5B9BC8;
+  animation: gouttes .7s ease-out forwards; }
+@keyframes anneau { from { transform: scale(.2); opacity: 1; } to { transform: scale(1); opacity: 0; } }
+@keyframes gouttes { from { transform: scale(.3); opacity: 1; } to { transform: scale(1.8); opacity: 0; } }
+/* explosion : boule de feu + éclats */
+.effet.explosion { background: radial-gradient(circle, #FFF3C4 0 12%, #FFB347 28%, rgba(224, 83, 61, .85) 45%, rgba(224, 83, 61, 0) 68%);
+  animation: boom .75s ease-out forwards; }
+.effet.explosion::after { content: ""; position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px; border-radius: 50%;
+  background: #FFB347; box-shadow: 0 -14px 0 #FF7A45, 12px -7px 0 #FFB347, 12px 7px 0 #E0533D, 0 14px 0 #FF7A45, -12px 7px 0 #FFB347, -12px -7px 0 #E0533D;
+  animation: eclats .75s ease-out forwards; }
+@keyframes boom { 0% { transform: scale(.2); opacity: 1; } 40% { transform: scale(1.05); opacity: 1; } 100% { transform: scale(1.25); opacity: 0; } }
+@keyframes eclats { from { transform: scale(.4); opacity: 1; } to { transform: scale(2.2); opacity: 0; } }
+.grille.choc { animation: choc .35s; }
+@keyframes choc { 20% { transform: translate(-3px, 2px); } 40% { transform: translate(3px, -2px); } 60% { transform: translate(-2px, -1px); } 80% { transform: translate(2px, 1px); } }
+/* le dernier tir de l'ami sur ma flotte : un petit halo qui pulse */
+#grille-moi .case.dernier { animation: halo 1.6s ease-in-out 3; }
+@keyframes halo { 50% { box-shadow: 0 0 0 3px rgba(224, 83, 61, .45); } }
+
+/* ---------- Replay ---------- */
+.fenetre.replay { width: min(480px, calc(100vw - 16px)); padding: 14px; }
+.replay .chat-tete h2 { flex: 1; }
+.replay-grilles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.replay-titre { margin: 0 0 4px; font: 600 12px var(--serif); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grille.mini { padding: 4px 4px 4px 1px; gap: 1px; grid-template-columns: 9px repeat(10, minmax(0, 1fr)); border-radius: 8px; }
+.grille.mini .repere { font-size: 6px; }
+.grille.mini .case { border-radius: 2px; }
+.replay-legende { margin: 0; text-align: center; font-weight: 600; min-height: 1.5em; }
+.replay-curseur { width: 100%; accent-color: var(--corail); }
+.replay-commandes { display: grid; grid-template-columns: 1fr 1fr 2fr 1fr; gap: 8px; }
+.replay-commandes .btn { padding: 8px; min-height: 46px; }
+
+/* ---------- Palmarès et trophées ---------- */
+.sous-partie { font: 600 16px var(--serif); margin: 6px 0 0; display: flex; justify-content: space-between; align-items: baseline; }
+.liste-duels, .liste-trophees { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.liste-duels li { display: flex; justify-content: space-between; align-items: center; padding: 8px 12px; border-radius: 12px; background: var(--eau); }
+.liste-duels li.vide { justify-content: center; color: var(--encre-douce); font-size: 14px; }
+.duel-nom { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.duel-score { font: 700 18px var(--serif); flex: none; margin-left: 10px; }
+.liste-duels li.devant .duel-score { color: var(--vert); }
+.liste-duels li.derriere .duel-score { color: var(--corail-fonce); }
+.liste-trophees li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--trait); background: var(--carte); }
+.liste-trophees li > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.liste-trophees small { color: var(--encre-douce); font-size: 13px; }
+.trophee-icone { font-size: 26px; width: 34px; text-align: center; flex: none; }
+.liste-trophees li.verrouille { opacity: .55; }
+.liste-trophees li.verrouille .trophee-icone { filter: grayscale(1); font-size: 20px; }
+.liste-trophees.nouveaux li { background: #FFF6DA; border-color: #E8CF7E; animation: pop .4s ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
