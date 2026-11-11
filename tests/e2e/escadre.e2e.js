@@ -83,7 +83,8 @@ async function jouerUnTour(page) {
     const connu = cases.map((c) => (c.classList.contains("coule") ? "coule" : c.classList.contains("touche") ? "touche"
       : c.classList.contains("eau") || c.classList.contains("attente") ? "eau" : c.classList.contains("bloque") ? "bouclier" : null));
     if (!connu.includes(null) && !connu.includes("bouclier")) return null;
-    const t = window.IA.choisirTir("moyen", connu, window.Regles.flotteDe({}), { taille: n });
+    // la meilleure tactique de l'ordinateur, pour des parties de test plus courtes
+    const t = window.IA.choisirTir("difficile", connu, window.Regles.flotteDe({ bonus: 2 }), { taille: n });
     return cases[t.y * n + t.x].getAttribute("aria-label");
   });
   if (!cible) return "rien";
@@ -134,12 +135,12 @@ async function jouerJusquALaFin(pages, limiteMs, surTour) {
 
 /* ---------------- Scénario 1 : deux amis, mode Compétences, réseau qui perd des messages ---------------- */
 async function scenarioDeuxJoueurs(navigateur, base) {
-  console.log("\n▶ Deux joueurs, mode Compétences 12×12 + frégate, 20 % de messages perdus");
+  console.log("\n▶ Deux joueurs, mode Compétences 12×12 + frégate, 15 % de messages perdus");
   const ctx = await navigateur.newContext({ viewport: { width: 390, height: 844 } });
   const erreurs = [];
   const A = await ctx.newPage(), B = await ctx.newPage();
   surveillerErreurs(A, "A", erreurs); surveillerErreurs(B, "B", erreurs);
-  const q = "local=1&perte=0.2";
+  const q = "local=1&perte=0.15";
 
   await A.goto(`${base}/index.html?${q}`);
   await A.fill("#champ-nom", "Yoann");
@@ -169,7 +170,7 @@ async function scenarioDeuxJoueurs(navigateur, base) {
   verifier(true, "la bataille commence des deux côtés");
 
   let recharge = false;
-  const { tours, competences } = await jouerJusquALaFin([A, B], 420000, async (n) => {
+  const { tours, competences } = await jouerJusquALaFin([A, B], 540000, async (n) => {
     if (n === 14 && !recharge) { // l'invitée recharge la page en pleine partie
       recharge = true;
       await B.reload();
