@@ -3,20 +3,24 @@
    --------------------------------------------------------------------------
    Astuce d'architecture : l'ordinateur se comporte EXACTEMENT comme un ami
    qui aurait rejoint la partie. Il reçoit et envoie les mêmes messages
-   (« bonjour », « tir », « resultat », « flotte »…). Ainsi tout le reste de
-   l'appli (tours, annonces, anti-triche, revanche, discussion) marche sans
-   rien changer, et le mode solo ne peut pas « tricher » non plus.
+   (« bonjour », « action », « reponse », « flotte »…) et utilise le même
+   moteur (js/moteur.js). Ainsi tout le reste de l'appli (tours, annonces,
+   anti-triche, revanche, discussion, compétences) marche sans rien changer,
+   et l'ordinateur ne peut pas tricher non plus.
 
    Trois niveaux :
-   - facile    : tire surtout au hasard ;
+   - facile    : tire surtout au hasard, utilise ses compétences au petit bonheur ;
    - moyen     : chasse (une case sur deux), puis achève le navire touché ;
    - difficile : calcule pour chaque case combien de navires pourraient s'y
-                 cacher, et tire là où c'est le plus probable.
+                 cacher, tire là où c'est le plus probable et choisit ses
+                 compétences avec soin.
    ========================================================================== */
 (function (racine) {
   "use strict";
-  const R = racine.Regles || (typeof require !== "undefined" ? require("./regles.js") : null);
-  const D = racine.Discussion || (typeof require !== "undefined" ? require("./discussion.js") : null);
+  const req = (nom) => (typeof require !== "undefined" ? require(nom) : null);
+  const R = racine.Regles || req("./regles.js");
+  const D = racine.Discussion || req("./discussion.js");
+  const M = racine.Moteur || req("./moteur.js");
 
   const NIVEAUX = {
     facile:    { nom: "Matelot Robin",  titre: "Facile" },
@@ -26,21 +30,26 @@
 
   /* ------------------------------------------------------------------
      Choix du tir (logique pure, testable)
-     connu : tableau de 100 valeurs : null (inconnu), "eau", "touche", "coule"
-     restants : tailles des navires pas encore coulés, ex. [5, 3, 2]
-     regles : { colles } (si les navires ne se touchent pas, les cases autour
-              d'une épave sont forcément vides)
+     connu : tableau de taille × taille : null (inconnu), "eau", "touche",
+             "coule", "bouclier" (navire protégé : à retenter), "vide"
+             (sûrement sans navire intact, d'après un sonar ou un radar)
+     restants : navires pas encore coulés [{ long, larg }]
      ------------------------------------------------------------------ */
-  const T = 10;
-  const idx = (x, y) => y * T + x;
-  const dedans = (x, y) => x >= 0 && x < T && y >= 0 && y < T;
   const VOISINS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
 
-  function preparer(connu, regles) {
+  function outils(taille) {
+    const idx = (x, y) => y * taille + x;
+    const dedans = (x, y) => x >= 0 && x < taille && y >= 0 && y < taille;
+    const versCase = (i) => ({ x: i % taille, y: Math.floor(i / taille) });
+    return { idx, dedans, versCase };
+  }
+
+  function preparer(connu, taille, regles) {
+    const { idx, dedans } = outils(taille);
     const k = connu.slice();
     if (regles && regles.colles === false) {
       // Autour d'un navire coulé, il ne peut rien y avoir : on les marque « eau ».
-      for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
+      for (let y = 0; y < taille; y++) for (let x = 0; x < taille; x++) {
         if (connu[idx(x, y)] !== "coule") continue;
         for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) {
           if (dedans(x + dx, y + dy) && k[idx(x + dx, y + dy)] === null) k[idx(x + dx, y + dy)] = "eau";
@@ -50,99 +59,159 @@
     return k;
   }
 
-  function libres(k) {
-    const l = [];
-    for (let i = 0; i < T * T; i++) if (k[i] === null) l.push(i);
-    return l;
-  }
-
-  function auHasard(liste, rnd) { return liste[Math.floor(rnd() * liste.length)]; }
-  const versCase = (i) => ({ x: i % T, y: Math.floor(i / T) });
+  const auHasard = (liste, rnd) => liste[Math.floor(rnd() * liste.length)];
+  const tirable = (v) => v === null || v === "vide" || v === "bouclier";
 
   // Cases inconnues voisines d'un « touché » pas encore coulé (en priorité dans l'alignement)
-  function ciblesAutourDesTouches(k) {
+  function ciblesAutourDesTouches(k, taille) {
+    const { idx, dedans, versCase } = outils(taille);
     const touches = [];
-    for (let i = 0; i < T * T; i++) if (k[i] === "touche") touches.push(versCase(i));
+    for (let i = 0; i < k.length; i++) if (k[i] === "touche" || k[i] === "bouclier") touches.push(versCase(i));
     if (!touches.length) return [];
-    // Deux touchés alignés : on prolonge la ligne
+    const libre = (x, y) => dedans(x, y) && (k[idx(x, y)] === null || k[idx(x, y)] === "bouclier");
     const alignees = [];
     for (const a of touches) {
       for (const [dx, dy] of VOISINS) {
         if (!dedans(a.x + dx, a.y + dy) || k[idx(a.x + dx, a.y + dy)] !== "touche") continue;
-        // on avance dans les deux sens jusqu'à une case inconnue
         for (const s of [1, -1]) {
           let x = a.x, y = a.y;
           while (dedans(x, y) && k[idx(x, y)] === "touche") { x += dx * s; y += dy * s; }
-          if (dedans(x, y) && k[idx(x, y)] === null) alignees.push(idx(x, y));
+          if (libre(x, y)) alignees.push(idx(x, y));
         }
       }
     }
     if (alignees.length) return Array.from(new Set(alignees));
     const autour = [];
-    for (const a of touches) for (const [dx, dy] of VOISINS) {
-      if (dedans(a.x + dx, a.y + dy) && k[idx(a.x + dx, a.y + dy)] === null) autour.push(idx(a.x + dx, a.y + dy));
-    }
+    for (const a of touches) for (const [dx, dy] of VOISINS) if (libre(a.x + dx, a.y + dy)) autour.push(idx(a.x + dx, a.y + dy));
     return Array.from(new Set(autour));
   }
 
-  // Carte des probabilités : pour chaque navire restant, on essaie toutes les
-  // positions possibles et on compte combien passent par chaque case.
-  function carteProbabilites(k, restants) {
-    const poids = new Array(T * T).fill(0);
-    const chasse = k.includes("touche");
-    for (const taille of restants) {
-      for (let y = 0; y < T; y++) for (let x = 0; x < T; x++) {
-        for (const h of [true, false]) {
+  // Carte des probabilités : pour chaque navire restant, toutes les positions possibles.
+  function carteProbabilites(k, taille, restants) {
+    const { idx, dedans } = outils(taille);
+    const poids = new Array(taille * taille).fill(0);
+    const chasse = k.includes("touche") || k.includes("bouclier");
+    for (const nav of restants) {
+      const formes = nav.long === nav.larg ? [[nav.long, nav.larg]] : [[nav.long, nav.larg], [nav.larg, nav.long]];
+      for (const [l, h] of formes) {
+        for (let y = 0; y <= taille - h; y++) for (let x = 0; x <= taille - l; x++) {
           const cases = [];
           let ok = true, nbTouches = 0;
-          for (let i = 0; i < taille; i++) {
-            const cx = h ? x + i : x, cy = h ? y : y + i;
+          for (let j = 0; j < h && ok; j++) for (let i = 0; i < l; i++) {
+            const cx = x + i, cy = y + j;
             if (!dedans(cx, cy)) { ok = false; break; }
             const v = k[idx(cx, cy)];
-            if (v === "eau" || v === "coule") { ok = false; break; }
-            if (v === "touche") nbTouches++;
+            if (v === "eau" || v === "coule" || v === "vide") { ok = false; break; }
+            if (v === "touche" || v === "bouclier") nbTouches++;
             cases.push(idx(cx, cy));
           }
           if (!ok) continue;
-          if (chasse && nbTouches === 0) continue;     // on se concentre sur le navire blessé
+          if (chasse && nbTouches === 0) continue; // on se concentre sur le navire blessé
           const p = chasse ? Math.pow(20, nbTouches) : 1;
-          for (const c of cases) if (k[c] === null) poids[c] += p;
+          for (const c of cases) if (k[c] === null || k[c] === "bouclier") poids[c] += p;
         }
       }
     }
     return poids;
   }
 
-  function choisirTir(niveau, connu, restants, regles, hasard) {
+  function choisirTir(niveau, connu, restants, regles, hasard, indices) {
     const rnd = hasard || Math.random;
-    const k = preparer(connu, regles);
-    const tous = libres(k);
-    if (!tous.length) {
-      const brut = libres(connu); // ne devrait pas arriver, mais on ne bloque jamais
-      return versCase(auHasard(brut.length ? brut : [0], rnd));
-    }
+    const r = R.normaliser(regles);
+    const taille = r.taille;
+    const { idx, versCase } = outils(taille);
+    const k = preparer(connu, taille, r);
+    // Une case de navire déjà repérée (périscope, bouclier) : on la vise
+    const reperees = (indices || []).filter((c) => tirable(k[idx(c.x, c.y)]) && k[idx(c.x, c.y)] !== "vide");
+    if (reperees.length && (niveau !== "facile" || rnd() < 0.5)) return auHasard(reperees, rnd);
 
-    if (niveau === "facile") {
-      const cibles = ciblesAutourDesTouches(k);
-      if (cibles.length && rnd() < 0.2) return versCase(auHasard(cibles, rnd));
+    const tous = [];
+    for (let i = 0; i < k.length; i++) if (k[i] === null || k[i] === "bouclier") tous.push(i);
+    if (!tous.length) {
+      for (let i = 0; i < k.length; i++) if (k[i] === "vide" || connu[i] === null) tous.push(i);
+      if (!tous.length) return { x: 0, y: 0 };
       return versCase(auHasard(tous, rnd));
     }
 
+    if (niveau === "facile") {
+      const cibles = ciblesAutourDesTouches(k, taille);
+      if (cibles.length && rnd() < 0.2) return versCase(auHasard(cibles, rnd));
+      return versCase(auHasard(tous, rnd));
+    }
     if (niveau === "moyen") {
-      const cibles = ciblesAutourDesTouches(k);
+      const cibles = ciblesAutourDesTouches(k, taille);
       if (cibles.length) return versCase(auHasard(cibles, rnd));
-      const damier = tous.filter((i) => ((i % T) + Math.floor(i / T)) % 2 === 0);
+      const damier = tous.filter((i) => ((i % taille) + Math.floor(i / taille)) % 2 === 0);
       return versCase(auHasard(damier.length ? damier : tous, rnd));
     }
-
-    // difficile
-    const poids = carteProbabilites(k, restants.length ? restants : [2]);
+    const poids = carteProbabilites(k, taille, restants.length ? restants : [{ long: 2, larg: 1 }]);
     let max = -1, meilleures = [];
     for (const i of tous) {
       if (poids[i] > max) { max = poids[i]; meilleures = [i]; }
       else if (poids[i] === max) meilleures.push(i);
     }
     return versCase(auHasard(meilleures, rnd));
+  }
+
+  /* Ce que l'ordinateur sait de la grille du joueur, au format de choisirTir
+     (les sonars / radars « 0 » marquent leur zone comme vide). */
+  function savoir(journal, attaquant, regles) {
+    const r = R.normaliser(regles);
+    const c = M.connaissance(journal, attaquant, r.taille);
+    const k = c.grille.slice();
+    c.infos.forEach((info) => {
+      if (info.n === 0 && info.zone) info.zone.forEach((z) => { const i = z.y * r.taille + z.x; if (k[i] === null) k[i] = "vide"; });
+    });
+    const coulesIds = c.coules.map((x) => x.id);
+    const restants = R.flotteDe(r).filter((n) => !coulesIds.includes(n.id));
+    return { k, restants, indices: c.indices };
+  }
+
+  /* ------------------------------------------------------------------
+     Compétences de l'ordinateur
+     ------------------------------------------------------------------ */
+  const PREFERENCES = ["bombardement", "raid", "eclair", "salve", "periscope", "torpille", "grenadage", "bouclier", "sonar", "radar", "mine"];
+  function choisirCompetence(offre, niveau, hasard) {
+    const rnd = hasard || Math.random;
+    if (niveau === "facile") return auHasard(offre, rnd);
+    return offre.slice().sort((a, b) => PREFERENCES.indexOf(a) - PREFERENCES.indexOf(b))[0];
+  }
+
+  // Paramètres d'une compétence, autour de la meilleure case du moment
+  function preparerAction(type, niveau, journal, moi, regles, rnd, defenseOk) {
+    const r = R.normaliser(regles);
+    const T = r.taille;
+    const { k, restants, indices } = savoir(journal, moi, r);
+    const meilleure = () => choisirTir(niveau, k, restants, r, rnd, indices);
+    const c = meilleure();
+    const lignePlusDense = () => ({ axe: rnd() < 0.5 ? "ligne" : "colonne", index: rnd() < 0.5 ? c.y : c.x });
+    switch (type) {
+      case "tir": case "eclair": case "grenadage": return { x: c.x, y: c.y };
+      case "sonar": return { x: c.x, y: c.y };
+      case "salve": {
+        const k2 = k.slice(); k2[c.y * T + c.x] = "eau";
+        let d = choisirTir(niveau, k2, restants, r, rnd, indices.filter((i) => i.x !== c.x || i.y !== c.y));
+        if (d.x === c.x && d.y === c.y) d = { x: (c.x + 1) % T, y: c.y };
+        return { cases: [c, d] };
+      }
+      case "raid": {
+        const h = rnd() < 0.5;
+        return h ? { x: c.x - 1, y: c.y, h } : { x: c.x, y: c.y - 1, h };
+      }
+      case "bombardement": return { x: c.x - (rnd() < 0.5 ? 1 : 0), y: c.y - (rnd() < 0.5 ? 1 : 0) };
+      case "radar": { const l = lignePlusDense(); return { axe: l.axe, index: l.axe === "ligne" ? c.y : c.x }; }
+      case "torpille": {
+        const axe = rnd() < 0.5 ? "ligne" : "colonne";
+        const pos = axe === "ligne" ? c.x : c.y;
+        return { axe, index: axe === "ligne" ? c.y : c.x, sens: pos < T / 2 ? 1 : -1 };
+      }
+      case "periscope": return {};
+      case "bouclier": case "mine": {
+        // la case secrète est choisie à part (voir defenseOk)
+        return defenseOk ? {} : null;
+      }
+      default: return null;
+    }
   }
 
   /* ------------------------------------------------------------------
@@ -153,30 +222,35 @@
     reponse: ["Concentre-toi sur la partie 😄", "Je calcule ton prochain naufrage…", "Bip boup. Ta flotte est en danger 🤖", "Tu parles beaucoup pour quelqu'un qui va couler !", "Bien reçu, capitaine 🫡", "Haha ! On verra à la fin 😎"],
     jeCoule: ["Et un de moins ! 💥", "Glouglou… 🫧", "Coulé ! Tu l'avais mal caché 😎"],
     ilCoule: ["Aïe… bien vu 😤", "Joli tir ! 👏", "Pas mal… mais ce n'est pas fini !"],
+    competence: ["Tu vas voir ce que tu vas voir ✨", "Petit cadeau pour toi 🎁", "Compétence spéciale ! 😏"],
     jeGagne: ["Victoire ! Une revanche ? 🔁", "La mer est à moi 🌊👑"],
     ilGagne: ["Bravo capitaine, bien joué ! 👏", "Je m'incline… pour cette fois 😤"],
   };
 
   /* ------------------------------------------------------------------
      L'adversaire virtuel. Il joue le rôle de l'invité.
-     options = { niveau, envoyer(msg), lire(), ecrire(etat), delai(ms) }
+     options = { niveau, envoyer(msg), lire(), ecrire(etat), rapide }
      ------------------------------------------------------------------ */
+  const MOI = "invite", LUI = "hote";
+
   function Ordinateur(options) {
     const niveau = NIVEAUX[options.niveau] ? options.niveau : "moyen";
     const nom = NIVEAUX[niveau].nom;
     const rapide = !!options.rapide; // tests automatiques : on ne fait pas attendre
     let E = options.lire() || null;   // l'état de l'ordinateur (gardé en mémoire)
-    let minuteurTir = null;
+    if (E && !Array.isArray(E.journal)) E = null; // ancienne version : on repart de zéro
+    let minuteur = null;
     let arrete = false;
 
     function nouvelEtat(partieId, premier, regles) {
       const ancien = E || {};
+      const r = R.normaliser(regles);
       E = {
-        partieId, premier, regles,
-        navires: R.placementAleatoire(regles),
+        partieId, premier, regles: r,
+        navires: R.placementAleatoire(r),
+        defense: [], main: [], offresVues: 0,
         pret: false, adversairePret: false,
-        tirsEnvoyes: [], tirsRecus: [],
-        fin: false, revanche: false,
+        journal: [], fin: false, revanche: false, flotteVue: false,
         chat: ancien.chat || [], chatEnvoyes: ancien.chatEnvoyes || 0, chatRecus: ancien.chatRecus || 0, chatConfirmes: ancien.chatConfirmes || 0,
         salue: !!ancien.salue,
       };
@@ -189,65 +263,73 @@
     const auHasardDe = (l) => l[Math.floor(Math.random() * l.length)];
 
     function etat() {
-      return { t: "etat", partieId: E ? E.partieId : null, pret: !!(E && E.pret), nom, aSaFlotte: !!(E && E.flotteVue), chatRecus: E ? E.chatRecus : 0 };
+      return { t: "etat", partieId: E ? E.partieId : null, pret: !!(E && E.pret), nom, id: "ordinateur-" + niveau, aSaFlotte: !!(E && E.flotteVue), chatRecus: E ? E.chatRecus : 0 };
     }
     function bonjour() { return { t: "bonjour", jeton: "ordinateur-" + niveau, id: "ordinateur-" + niveau, nom, partieId: E ? E.partieId : null }; }
-
-    function dire(texte) {
-      if (!E) return;
-      const m = D.ecrire(E, texte);
-      if (m) { sauver(); envoyer(m); }
-    }
+    function dire(texte) { if (!E) return; const m = D.ecrire(E, texte); if (m) { sauver(); envoyer(m); } }
     function direParfois(cle, chance) { if (Math.random() < chance) attendre(900, () => dire(auHasardDe(PHRASES[cle]))); }
 
-    const premierEstMoi = () => E.premier === "invite";
-    const monTour = () => !E.fin && E.pret && E.adversairePret && R.estMonTour(premierEstMoi(), E.tirsEnvoyes.length, E.tirsRecus.length);
+    const enJeu = () => E && E.pret && E.adversairePret && !E.fin;
+    const enAttente = () => E.journal.some((a) => !a.res);
 
-    // Ce que je sais de la grille du joueur
-    function connaissance() {
-      const k = new Array(100).fill(null);
-      const coules = [];
-      E.tirsEnvoyes.forEach((t) => {
-        if (t.res === null) return;
-        k[t.y * 10 + t.x] = t.res === "eau" ? "eau" : "touche";
-        if (t.res === "coule") coules.push(t);
-      });
-      coules.forEach((t) => (t.cases || []).forEach((c) => (k[c.y * 10 + c.x] = "coule")));
-      const restants = R.FLOTTE.filter((f) => !coules.some((t) => t.navire === f.id)).map((f) => f.taille);
-      return { k, restants };
+    // Nouvelles compétences gagnées : l'ordinateur choisit tout de suite
+    function ramasserCompetences() {
+      if (!E.regles.competences) return;
+      const s = M.stock(E.journal, MOI);
+      while (E.offresVues < s.gagnees) {
+        E.offresVues++;
+        const coules = M.connaissance(E.journal, LUI, E.regles.taille).coules.map((c) => c.id); // mes navires coulés par lui
+        const offre = M.tirage(M.reserve(E.regles, coules), 3);
+        E.main.push(choisirCompetence(offre, niveau));
+      }
     }
 
     function jouerSiBesoin() {
-      if (!E || arrete) return;
-      // Un tir sans réponse (page rechargée…) : on le redemande.
-      E.tirsEnvoyes.forEach((t, n) => { if (t.res === null) envoyer({ t: "tir", partieId: E.partieId, n, x: t.x, y: t.y }); });
-      if (!monTour() || minuteurTir || E.tirsEnvoyes.some((t) => t.res === null)) return;
-      minuteurTir = attendre(900 + Math.random() * 900, () => {
-        minuteurTir = null;
-        if (!monTour()) return;
-        const { k, restants } = connaissance();
-        const c = choisirTir(niveau, k, restants, E.regles);
-        const n = E.tirsEnvoyes.length;
-        E.tirsEnvoyes.push({ x: c.x, y: c.y, res: null });
-        sauver();
-        envoyer({ t: "tir", partieId: E.partieId, n, x: c.x, y: c.y });
+      if (!enJeu() || arrete) return;
+      // Une action sans réponse (page rechargée…) : on la redemande.
+      E.journal.forEach((a) => { if (a.qui === MOI && !a.res) envoyer({ t: "action", partieId: E.partieId, g: a.g, qui: a.qui, type: a.type, p: a.p }); });
+      if (minuteur || enAttente() || M.quiJoue(E.journal, E.premier) !== MOI) return;
+      minuteur = attendre(900 + Math.random() * 900, () => {
+        minuteur = null;
+        if (!enJeu() || enAttente() || M.quiJoue(E.journal, E.premier) !== MOI) return;
+        agir();
       });
     }
 
-    function devenirPret() {
-      if (!E || E.pret) return;
-      attendre(1200, () => {
-        if (!E || E.pret) return;
-        E.pret = true; sauver();
-        envoyer(etat());
-        jouerSiBesoin();
-      });
+    function agir() {
+      const r = E.regles;
+      let type = "tir", p = null, defense = null;
+      const dispo = r.competences ? M.stock(E.journal, MOI).dispo : 0;
+      const envie = niveau === "facile" ? Math.random() < 0.5 : true;
+      if (dispo > 0 && E.main.length && envie) {
+        const choisie = E.main[0];
+        if (choisie === "bouclier" || choisie === "mine") {
+          const e = M.etatDefense(E.navires, E.defense, E.journal, MOI, r);
+          const candidates = [];
+          for (let y = 0; y < r.taille; y++) for (let x = 0; x < r.taille; x++) if (e.defensePossible(choisie, x, y)) candidates.push({ x, y });
+          if (candidates.length) defense = Object.assign({ type: choisie }, auHasardDe(candidates));
+        }
+        const params = preparerAction(choisie, niveau, E.journal, MOI, r, Math.random, !!defense);
+        const propres = params && M.normaliserParams(choisie, params, r.taille);
+        if (propres) { type = choisie; p = propres; E.main.shift(); }
+        else defense = null;
+      }
+      if (!p) {
+        p = preparerAction("tir", niveau, E.journal, MOI, r, Math.random);
+        type = "tir";
+      }
+      const g = E.journal.length;
+      if (defense) E.defense.push(Object.assign(defense, { g }));
+      E.journal.push({ g, qui: MOI, type, p, res: null });
+      sauver();
+      if (type !== "tir") direParfois("competence", 0.3);
+      envoyer({ t: "action", partieId: E.partieId, g, qui: MOI, type, p });
     }
 
     function finir(jeGagne) {
       if (E.fin) return;
       E.fin = true; sauver();
-      envoyer({ t: "flotte", partieId: E.partieId, navires: E.navires });
+      envoyer({ t: "flotte", partieId: E.partieId, navires: E.navires, defense: E.defense });
       direParfois(jeGagne ? "jeGagne" : "ilGagne", 0.9);
     }
 
@@ -257,8 +339,8 @@
         case "bienvenue":
         case "nouvelle":
           if (!E || msg.partieId !== E.partieId || msg.t === "nouvelle") {
-            clearTimeout(minuteurTir); minuteurTir = null;
-            nouvelEtat(String(msg.partieId), msg.premier === "hote" ? "hote" : "invite", { colles: !(msg.regles && msg.regles.colles === false) });
+            clearTimeout(minuteur); minuteur = null;
+            nouvelEtat(String(msg.partieId), msg.premier === "hote" ? "hote" : "invite", msg.regles);
           }
           envoyer(etat());
           devenirPret();
@@ -270,42 +352,41 @@
           D.aRenvoyer(E, msg.chatRecus).forEach(envoyer);
           if (Number.isInteger(msg.chatRecus) && msg.chatRecus <= E.chatEnvoyes) E.chatConfirmes = Math.max(E.chatConfirmes, msg.chatRecus);
           E.adversairePret = !!msg.pret;
-          if (E.fin && !msg.aSaFlotte) envoyer({ t: "flotte", partieId: E.partieId, navires: E.navires });
+          if (E.fin && !msg.aSaFlotte) envoyer({ t: "flotte", partieId: E.partieId, navires: E.navires, defense: E.defense });
           if (E.revanche) envoyer({ t: "revanche", partieId: E.partieId });
           sauver();
           devenirPret();
           jouerSiBesoin();
           break;
 
-        case "tir": {
-          if (!E || msg.partieId !== E.partieId || !Number.isInteger(msg.n)) return;
-          if (msg.n < E.tirsRecus.length) { // déjà traité : même réponse
-            envoyer(Object.assign({ t: "resultat", partieId: E.partieId, n: msg.n }, E.tirsRecus[msg.n]));
-            return;
-          }
-          const sonTour = E.pret && E.adversairePret && !E.fin && R.estMonTour(!premierEstMoi(), E.tirsRecus.length, E.tirsEnvoyes.length);
-          if (msg.n !== E.tirsRecus.length || !sonTour) return;
-          if (!Number.isInteger(msg.x) || !Number.isInteger(msg.y) || E.tirsRecus.some((t) => t.x === msg.x && t.y === msg.y)) return;
-          const r = R.resoudreTir(E.navires, E.tirsRecus, msg.x, msg.y);
-          const enregistre = Object.assign({ x: msg.x, y: msg.y }, r);
-          E.tirsRecus.push(enregistre);
+        case "action": {
+          if (!E || msg.partieId !== E.partieId) return;
+          const deja = E.journal[msg.g];
+          if (deja && deja.qui === LUI && deja.res) { envoyer({ t: "reponse", partieId: E.partieId, g: deja.g, res: deja.res }); return; }
+          if (!enJeu() || enAttente()) return;
+          const a = M.actionValide(E.journal, E.regles, E.premier, msg);
+          if (!a || a.qui !== LUI) return;
+          const e = M.etatDefense(E.navires, E.defense, E.journal, MOI, E.regles);
+          a.res = e.resoudre(a);
+          E.journal.push(a);
           sauver();
-          envoyer(Object.assign({ t: "resultat", partieId: E.partieId, n: msg.n }, enregistre));
-          if (r.fin) finir(false);
-          else { if (r.res === "coule") direParfois("ilCoule", 0.35); jouerSiBesoin(); }
+          envoyer({ t: "reponse", partieId: E.partieId, g: a.g, res: a.res });
+          if (a.res.fin) finir(false);
+          else { if (a.res.cases.some((c) => c.res === "coule")) direParfois("ilCoule", 0.35); jouerSiBesoin(); }
           break;
         }
 
-        case "resultat": {
-          if (!E || msg.partieId !== E.partieId || !Number.isInteger(msg.n)) return;
-          const t = E.tirsEnvoyes[msg.n];
-          if (!t || t.res !== null || t.x !== msg.x || t.y !== msg.y) return;
-          if (!["eau", "touche", "coule"].includes(msg.res)) return;
-          t.res = msg.res;
-          if (msg.res === "coule") { t.navire = msg.navire; t.cases = Array.isArray(msg.cases) ? msg.cases : []; }
+        case "reponse": {
+          if (!E || msg.partieId !== E.partieId) return;
+          const a = E.journal[msg.g];
+          if (!a || a.qui !== MOI || a.res) return;
+          const res = M.nettoyerRes(msg.res, E.regles.taille);
+          if (!res) return;
+          a.res = res;
+          ramasserCompetences();
           sauver();
-          if (msg.fin) finir(true);
-          else if (msg.res === "coule") direParfois("jeCoule", 0.4);
+          if (res.fin) finir(true);
+          else if (res.cases.some((c) => c.res === "coule")) direParfois("jeCoule", 0.4);
           jouerSiBesoin();
           break;
         }
@@ -325,7 +406,7 @@
           const m = D.recevoir(E, msg);
           if (!m) return;
           sauver();
-          envoyer(etat()); // accusé de réception tout de suite
+          envoyer(etat());
           if (Math.random() < 0.6) attendre(1400 + Math.random() * 1200, () => dire(auHasardDe(PHRASES.reponse)));
           break;
         }
@@ -339,10 +420,20 @@
       }
     }
 
+    function devenirPret() {
+      if (!E || E.pret) return;
+      attendre(1200, () => {
+        if (!E || E.pret) return;
+        E.pret = true; sauver();
+        envoyer(etat());
+        jouerSiBesoin();
+      });
+    }
+
     return {
       demarrer() { envoyer(bonjour()); },
       recevoir,
-      arreter() { arrete = true; clearTimeout(minuteurTir); },
+      arreter() { arrete = true; clearTimeout(minuteur); },
       nom,
     };
   }
@@ -373,7 +464,7 @@
     };
   }
 
-  const api = { NIVEAUX, choisirTir, carteProbabilites, Ordinateur, LiaisonSolo };
+  const api = { NIVEAUX, choisirTir, carteProbabilites, savoir, choisirCompetence, preparerAction, Ordinateur, LiaisonSolo };
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   else racine.IA = api;
 })(typeof window !== "undefined" ? window : this);

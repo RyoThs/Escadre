@@ -11,7 +11,7 @@
   const LISTE = [
     { id: "premiere",  icone: "🎖️", nom: "Premier sang",      desc: "Gagner une première partie." },
     { id: "elite",     icone: "🎯", nom: "Tireur d'élite",    desc: "Gagner avec au moins 60 % de tirs réussis." },
-    { id: "eclair",    icone: "⚡", nom: "Éclair",            desc: "Gagner en 35 tirs ou moins." },
+    { id: "eclair",    icone: "⚡", nom: "Coup de maître",    desc: "Gagner en tirant moins de 2 fois le nombre de cases de la flotte." },
     { id: "intouchable", icone: "🛡️", nom: "Intouchable",     desc: "Gagner sans perdre un seul navire." },
     { id: "fil",       icone: "🪢", nom: "Sur le fil",        desc: "Gagner avec un seul navire encore à flot." },
     { id: "serie3",    icone: "🔥", nom: "En feu",            desc: "Gagner 3 parties d'affilée." },
@@ -35,7 +35,8 @@
   /* Enregistre une partie terminée et renvoie la liste des trophées gagnés.
      resume = {
        gagne: bool, tirs: nb de tirs, reussis: nb de touchés,
-       mesCoules: nb de mes navires coulés, idAdverse, nomAdverse,
+       mesCoules: nb de mes navires coulés, nbNavires, totalCases,
+       idAdverse, nomAdverse,
        solo: bool, niveau: "facile" | "moyen" | "difficile"
      } */
   function enregistrerPartie(profil, resume, maintenant) {
@@ -61,9 +62,9 @@
     if (resume.gagne) {
       gagner("premiere");
       if (precision >= 0.6) gagner("elite");
-      if (resume.tirs <= 35) gagner("eclair");
+      if (resume.tirs <= 2 * (resume.totalCases || 17)) gagner("eclair");
       if (resume.mesCoules === 0) gagner("intouchable");
-      if (resume.mesCoules === 4) gagner("fil");
+      if (resume.mesCoules === (resume.nbNavires || 5) - 1) gagner("fil");
       if (profil.serie >= 3) gagner("serie3");
       if (resume.solo && resume.niveau === "difficile") gagner("amiral");
     }

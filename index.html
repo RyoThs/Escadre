@@ -43,14 +43,35 @@
       <button id="btn-reprendre" class="btn btn-principal">Reprendre la partie</button>
     </section>
 
-    <section class="carte">
-      <h2>Créer une partie</h2>
-      <p class="petit">Tu reçois un code à envoyer à ton ami.</p>
+    <!-- Réglages de la nouvelle partie (servent à deux et en solo) -->
+    <section class="carte reglages">
+      <h2>Nouvelle partie</h2>
+      <p class="etiquette">Mode de jeu</p>
+      <div id="choix-mode" class="choix-niveau" role="group" aria-label="Mode de jeu">
+        <button type="button" data-mode="normal">⚓ Classique</button>
+        <button type="button" data-mode="competences">✨ Compétences</button>
+      </div>
+      <p class="etiquette">Taille de la carte</p>
+      <div id="choix-carte" class="choix-niveau" role="group" aria-label="Taille de la carte">
+        <button type="button" data-taille="8">8×8</button>
+        <button type="button" data-taille="10">10×10</button>
+        <button type="button" data-taille="12">12×12</button>
+        <button type="button" data-taille="14">14×14</button>
+      </div>
+      <p class="etiquette">Navires en plus</p>
+      <div id="choix-bonus" class="choix-niveau" role="group" aria-label="Navires en plus">
+        <button type="button" data-bonus="0">Aucun</button>
+        <button type="button" data-bonus="1">+ Frégate</button>
+        <button type="button" data-bonus="2">+ Frégate + Vedette</button>
+      </div>
       <label class="interrupteur">
         <input type="checkbox" id="opt-colles" checked>
         <span>Les navires peuvent se toucher</span>
       </label>
-      <button id="btn-creer" class="btn btn-principal">Créer la partie</button>
+      <p id="resume-flotte" class="petit"></p>
+      <p id="note-reglages" class="petit note-reglages"></p>
+      <button id="btn-creer" class="btn btn-principal">Créer une partie à deux</button>
+      <p class="petit">Tu reçois un code à envoyer à ton ami.</p>
     </section>
 
     <section class="carte">
@@ -63,7 +84,7 @@
 
     <section class="carte">
       <h2>Jouer seul</h2>
-      <p class="petit">Entraîne-toi contre l'ordinateur, même sans réseau.</p>
+      <p class="petit">Contre l'ordinateur, avec les réglages ci-dessus, même sans réseau.</p>
       <div id="choix-niveau" class="choix-niveau" role="group" aria-label="Niveau de l'ordinateur">
         <button type="button" data-niveau="facile">Facile</button>
         <button type="button" data-niveau="moyen">Moyen</button>
@@ -102,6 +123,7 @@
     <section id="bloc-invitation" class="carte invitation" hidden>
       <p class="petit">Envoie ce code à ton ami :</p>
       <p id="code-partie" class="code-geant">-----</p>
+      <p id="regles-invitation" class="petit"></p>
       <div class="ligne">
         <button id="btn-partager" class="btn btn-secondaire">Partager le lien</button>
         <button id="btn-copier" class="btn btn-fantome">Copier</button>
@@ -159,6 +181,15 @@
 
     <!-- Bouton de tir (pendant la bataille) -->
     <div id="barre-tir" class="barre-tir" hidden>
+      <!-- Compétences (mode Compétences) -->
+      <div id="barre-competences" class="barre-competences" hidden>
+        <div id="main-competences" class="main-competences"></div>
+        <p id="aide-competence" class="petit aide-competence" hidden></p>
+        <div id="outils-competence" class="ligne" hidden>
+          <button id="btn-sens" class="btn btn-fantome" type="button">↻ Sens</button>
+          <button id="btn-annuler-comp" class="btn btn-fantome" type="button">Annuler</button>
+        </div>
+      </div>
       <div class="reactions" id="reactions">
         <button data-emoji="😂">😂</button><button data-emoji="😱">😱</button>
         <button data-emoji="🔥">🔥</button><button data-emoji="👏">👏</button>
@@ -261,9 +292,9 @@
   <dialog id="fenetre-regles" class="fenetre fenetre-longue">
     <h2>Les règles</h2>
     <ol class="regles">
-      <li>Chaque joueur a une grille de <strong>10 × 10</strong> cases (A à J, 1 à 10).</li>
-      <li>Il y place en secret sa flotte de <strong>5 navires</strong> :
-        porte-avions (5 cases), croiseur (4), contre-torpilleur (3), sous-marin (3) et torpilleur (2).</li>
+      <li>Chaque joueur a une grille de <strong>8, 10, 12 ou 14</strong> cases de côté (au choix du créateur).</li>
+      <li>Il y place en secret sa flotte : <strong>porte-avions 5×2</strong>, <strong>croiseur 4×2</strong>, sous-marin 4×1,
+        contre-torpilleur 3×1 et torpilleur 2×1. En option : une frégate 3×1, puis une vedette 2×1.</li>
       <li>Les navires sont posés à l'horizontale ou à la verticale, jamais en diagonale, et ne se chevauchent pas.
         Le créateur de la partie choisit s'ils peuvent se toucher.</li>
       <li>Le premier joueur est tiré au sort. Puis chacun tire <strong>un coup par tour</strong>, à tour de rôle.</li>
@@ -272,7 +303,29 @@
     </ol>
     <p class="petit">Ici, c'est l'appli qui annonce les résultats : impossible de tricher ou de se tromper. À la fin, chaque flotte est révélée et vérifiée.</p>
     <p class="petit">Pour tirer : touche une case pour viser, puis touche-la encore (ou le bouton Feu).</p>
+    <h3 class="sous-partie">✨ Mode Compétences (carte 12 ou 14)</h3>
+    <p class="petit">Deux tirs <em>à l'eau</em> d'affilée font gagner une compétence : on en choisit une parmi 3 tirées au sort, et on peut en garder 2.
+      Utiliser une compétence remplace le tir du tour. Chaque navire apporte sa compétence au tirage tant qu'il est à flot.</p>
+    <ul id="liste-competences-regles" class="regles liste-competences"></ul>
     <button class="btn btn-principal" data-fermer>J'ai compris</button>
+  </dialog>
+
+  <!-- Nouvelle compétence : on en choisit une parmi 3 -->
+  <dialog id="fenetre-offre" class="fenetre">
+    <p class="fin-icone">🎁</p>
+    <h2>Nouvelle compétence !</h2>
+    <p class="petit centre">Deux tirs à l'eau d'affilée : choisis ta récompense.</p>
+    <ul id="liste-offre" class="liste-offre"></ul>
+    <button class="btn btn-fantome" data-fermer>Plus tard</button>
+  </dialog>
+
+  <!-- Bouclier / mine : choisir une case de sa grille -->
+  <dialog id="fenetre-defense" class="fenetre defense">
+    <h2 id="defense-titre">Bouclier</h2>
+    <p id="defense-aide" class="petit centre"></p>
+    <div id="grille-defense" class="grille"></div>
+    <button id="btn-defense-ok" class="btn btn-principal" disabled>Confirmer</button>
+    <button class="btn btn-fantome" data-fermer>Annuler</button>
   </dialog>
 
   <dialog id="fenetre-confirmer" class="fenetre">
@@ -286,6 +339,7 @@
   <script src="js/regles.js"></script>
   <script src="js/navires.js"></script>
   <script src="js/discussion.js"></script>
+  <script src="js/moteur.js"></script>
   <script src="js/trophees.js"></script>
   <script src="js/ia.js"></script>
   <script src="js/sons.js"></script>

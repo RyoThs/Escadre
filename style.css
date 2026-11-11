@@ -124,7 +124,7 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 .titre-grille { display: flex; justify-content: space-between; align-items: baseline; font: 600 15px var(--serif); text-transform: uppercase; letter-spacing: 1.5px; }
 .grille {
   display: grid;
-  grid-template-columns: 18px repeat(10, minmax(0, 1fr));
+  grid-template-columns: 18px repeat(var(--n, 10), minmax(0, 1fr));
   gap: 2px;
   background: var(--carte);
   border: 1px solid var(--trait);
@@ -204,7 +204,7 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 
 /* pendant la bataille : ma petite grille à gauche, le suivi des cibles à droite */
 .mode-bataille .duo { display: grid; grid-template-columns: 56% 1fr; gap: 12px; align-items: start; }
-.mode-bataille #zone-moi .grille { padding: 5px 5px 5px 2px; gap: 1px; grid-template-columns: 11px repeat(10, minmax(0, 1fr)); border-radius: 10px; }
+.mode-bataille #zone-moi .grille { padding: 5px 5px 5px 2px; gap: 1px; grid-template-columns: 11px repeat(var(--n, 10), minmax(0, 1fr)); border-radius: 10px; }
 .mode-bataille #zone-moi .repere { font-size: 7px; }
 .mode-bataille #zone-moi .titre-grille { font-size: 12px; letter-spacing: 1px; flex-wrap: wrap; gap: 4px; }
 .mode-bataille .titre-grille .petit { font: 12px var(--sans); text-transform: none; letter-spacing: 0; }
@@ -368,7 +368,7 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 .replay .chat-tete h2 { flex: 1; }
 .replay-grilles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .replay-titre { margin: 0 0 4px; font: 600 12px var(--serif); text-transform: uppercase; letter-spacing: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.grille.mini { padding: 4px 4px 4px 1px; gap: 1px; grid-template-columns: 9px repeat(10, minmax(0, 1fr)); border-radius: 8px; }
+.grille.mini { padding: 4px 4px 4px 1px; gap: 1px; grid-template-columns: 9px repeat(var(--n, 10), minmax(0, 1fr)); border-radius: 8px; }
 .grille.mini .repere { font-size: 6px; }
 .grille.mini .case { border-radius: 2px; }
 .replay-legende { margin: 0; text-align: center; font-weight: 600; min-height: 1.5em; }
@@ -392,6 +392,59 @@ h2 { font: 600 20px/1.2 var(--serif); margin: 0 0 6px; }
 .liste-trophees li.verrouille { opacity: .55; }
 .liste-trophees li.verrouille .trophee-icone { filter: grayscale(1); font-size: 20px; }
 .liste-trophees.nouveaux li { background: #FFF6DA; border-color: #E8CF7E; animation: pop .4s ease-out; }
+
+/* ---------- v2 : cartes de 8 à 14, réglages, compétences ---------- */
+.grille[data-taille="12"], .grille[data-taille="14"] { gap: 1px; padding: 6px 6px 6px 2px; }
+.grille[data-taille="12"] .repere { font-size: 9px; }
+.grille[data-taille="14"] .repere { font-size: 8px; }
+.grille[data-taille="12"] .case, .grille[data-taille="14"] .case { border-radius: 3px; }
+.mode-bataille #zone-moi .grille[data-taille="12"] .repere, .mode-bataille #zone-moi .grille[data-taille="14"] .repere { font-size: 6px; }
+.icone-navire.large { height: 16px; }
+#zone-suivi .icone-navire.large { height: 13px; }
+.centre { text-align: center; }
+
+.reglages .etiquette { margin: 4px 0 -4px; }
+.choix-niveau button:disabled { opacity: .35; cursor: default; }
+#choix-bonus button { font-size: 13px; padding: 4px 2px; line-height: 1.15; }
+.note-reglages:empty, #resume-flotte:empty { display: none; }
+.note-reglages { color: var(--corail-fonce); }
+
+/* barre des compétences */
+.barre-competences { display: flex; flex-direction: column; gap: 6px; }
+.main-competences { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.jeton-competence { border: 1.5px solid var(--trait); background: var(--carte); border-radius: 999px; padding: 7px 12px; font-size: 14px; font-weight: 600; min-height: 38px; }
+.jeton-competence:disabled { opacity: .5; }
+.jeton-competence.actif { border-color: var(--corail); background: #FFF1EC; box-shadow: 0 0 0 3px rgba(224, 83, 61, .15); }
+.jeton-competence.cadeau { background: #FFF6DA; border-color: #E8CF7E; animation: pulse 1.6s ease-in-out infinite; }
+.jauge-eau { font-size: 13px; color: var(--encre-douce); margin-left: auto; }
+.aide-competence { margin: 0; text-align: center; }
+
+/* choix d'une compétence */
+.liste-offre { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.carte-competence { width: 100%; display: flex; align-items: center; gap: 10px; text-align: left; padding: 10px 12px; border-radius: 14px;
+  border: 1.5px solid var(--trait); background: var(--carte); }
+.carte-competence:active { transform: scale(.98); background: var(--sable); }
+.carte-competence > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.carte-competence small { color: var(--encre-douce); font-size: 13px; }
+.liste-competences { padding-left: 0; list-style: none; font-size: 14px; }
+
+/* fenêtre bouclier / mine */
+.fenetre.defense { width: min(460px, calc(100vw - 16px)); padding: 16px; }
+
+/* états des cases v2 */
+.case.bloque { background: #DCEBFA; box-shadow: inset 0 0 0 2px #5B9BC8; }
+.case.bloque::after { width: 52%; height: 60%; background: #5B9BC8; clip-path: polygon(50% 0, 100% 18%, 92% 65%, 50% 100%, 8% 65%, 0 18%); }
+.case.protege::after { width: 56%; height: 64%; background: rgba(91, 155, 200, .85); clip-path: polygon(50% 0, 100% 18%, 92% 65%, 50% 100%, 8% 65%, 0 18%); }
+.case.indice { box-shadow: inset 0 0 0 2px var(--corail); background: #FFE7A8; }
+.case.indice::before { content: "👁"; position: absolute; font-size: 9px; top: 0; right: 1px; }
+.marque-case { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; font: 700 11px var(--sans); z-index: 2; }
+.marque-case.info-sonar, .marque-case.info-radar, .marque-case.info-grenade {
+  inset: auto; width: 15px; height: 15px; border-radius: 50%; background: var(--encre); color: #fff; font-size: 9px; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+.marque-case.info-radar { background: #2E8B6A; }
+.marque-case.info-grenade { background: #8A5CC2; }
+.marque-case.mine-posee, .marque-case.mine-sautee { font-size: 10px; }
+.effet.bloque { border: 3px solid #5B9BC8; animation: anneau .7s ease-out forwards; }
+.grille[data-taille="14"] .marque-case { font-size: 9px; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; }

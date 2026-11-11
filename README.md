@@ -6,12 +6,20 @@ Application web installable (PWA), sans compte, sans serveur à payer.
 👉 **Jouer :** https://ryoths.github.io/Escadre/
 
 ## Règles
-Grille 10 × 10 · 5 navires (5, 4, 3, 3, 2 cases) · horizontaux ou verticaux, sans chevauchement ·
-premier joueur tiré au sort · un tir par tour · « à l'eau », « touché », « coulé » · le premier qui coule toute la flotte adverse gagne.
+Carte de 8, 10, 12 ou 14 cases de côté · flotte : porte-avions 5×2, croiseur 4×2, sous-marin 4×1, contre-torpilleur 3×1, torpilleur 2×1
+(+ frégate 3×1 et vedette 2×1 en option) · horizontaux ou verticaux, sans chevauchement · premier joueur tiré au sort ·
+un tir par tour · « à l'eau », « touché », « coulé » · le premier qui coule toute la flotte adverse gagne.
 Option : autoriser ou non les navires qui se touchent.
+
+### Mode Compétences (carte 12 ou 14)
+Deux tirs à l'eau d'affilée = une compétence, à choisir parmi 3 tirées au sort (2 en réserve au maximum). Utiliser une compétence remplace le tir du tour.
+- Communes : 🔊 Sonar (zone 3×3), 🎯 Salve (2 tirs), 🚀 Torpille (file sur une ligne), 🛡️ Bouclier (bloque un tir).
+- Par navire (dans le tirage tant qu'il est à flot) : ✈️ Raid aérien (porte-avions), 💣 Bombardement 2×2 (croiseur), 🔭 Périscope (sous-marin),
+  📡 Grenadage (contre-torpilleur), ⚡ Éclair (torpilleur), 📶 Radar (frégate), 💥 Mine (vedette).
 
 ## Ce que propose le jeu
 - **À deux**, chacun sur son téléphone, avec discussion intégrée et réactions.
+- **Réglages** avant chaque partie : mode Classique ou Compétences, taille de la carte, navires bonus.
 - **Seul contre l'ordinateur**, 3 niveaux : Matelot Robin (facile), Capitaine Hugo (moyen), Amiral Vega (difficile, calcule les cases les plus probables).
 - **Score face à face** gardé d'une partie à l'autre (« Toi 3 – 2 Léa ») et **10 trophées** à débloquer.
 - **Replay** de la partie coup par coup à la fin, les deux flottes visibles.
@@ -26,11 +34,12 @@ Option : autoriser ou non les navires qui se touchent.
 |---|---|
 | `index.html` | les écrans |
 | `style.css` | le style « carte marine » (thème clair) |
-| `js/regles.js` | les règles du jeu (testées) |
+| `js/regles.js` | les règles : tailles de carte, flotte large, placement (testées) |
 | `js/reseau.js` | la connexion entre téléphones (PeerJS / WebRTC) et la reconnexion |
 | `js/navires.js` | dessin des navires (vue de dessus, SVG) |
 | `js/discussion.js` | la discussion entre amis (messages numérotés et renvoyés s'ils se perdent) |
-| `js/ia.js` | le mode solo : l'ordinateur joue comme un ami connecté (mêmes messages) |
+| `js/moteur.js` | le journal des actions : tours, compétences, résultats, anti-triche (testé) |
+| `js/ia.js` | le mode solo : l'ordinateur joue comme un ami connecté (mêmes messages, compétences comprises) |
 | `js/trophees.js` | scores face à face et trophées (testés) |
 | `js/sons.js` | sons et vibrations |
 | `js/app.js` | le déroulé de la partie et l'affichage |

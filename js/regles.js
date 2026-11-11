@@ -2,54 +2,87 @@
    Escadre — les RÈGLES du jeu (aucun affichage ici, seulement la logique)
    --------------------------------------------------------------------------
    Ce fichier ne touche pas à l'écran : il sait seulement dire
-   « ce placement est-il valide ? », « ce tir touche-t-il ? », etc.
+   « quelle flotte pour ces réglages ? », « ce placement est-il valide ? »…
    Comme il est séparé, on peut le tester tout seul (voir tests/regles.test.js).
+
+   Version 2 :
+   - la carte peut faire 8, 10, 12 ou 14 cases de côté ;
+   - les grands navires sont LARGES (porte-avions 5 × 2, croiseur 4 × 2) ;
+   - on peut ajouter 1 ou 2 navires bonus (frégate, vedette) ;
+   - le mode Compétences impose une grande carte (12 ou 14).
    ========================================================================== */
 (function (racine) {
   "use strict";
 
-  const TAILLE = 10;                         // grille de 10 × 10 cases
-  const LETTRES = "ABCDEFGHIJ";              // colonnes A à J, lignes 1 à 10
+  const TAILLES = [8, 10, 12, 14];
+  const TAILLES_COMPETENCES = [12, 14];
+  const LETTRES = "ABCDEFGHIJKLMNOP";
 
-  // La flotte officielle (règles françaises classiques) : 5 navires, 17 cases.
-  const FLOTTE = [
-    { id: "pa", nom: "Porte-avions",      taille: 5 },
-    { id: "cr", nom: "Croiseur",          taille: 4 },
-    { id: "ct", nom: "Contre-torpilleur", taille: 3 },
-    { id: "sm", nom: "Sous-marin",        taille: 3 },
-    { id: "to", nom: "Torpilleur",        taille: 2 },
-  ];
-  const TOTAL_CASES = FLOTTE.reduce((s, n) => s + n.taille, 0); // 17
+  // Chaque navire : longueur × largeur (en cases)
+  const NAVIRES = {
+    pa: { id: "pa", nom: "Porte-avions",      long: 5, larg: 2 },
+    cr: { id: "cr", nom: "Croiseur",          long: 4, larg: 2 },
+    sm: { id: "sm", nom: "Sous-marin",        long: 4, larg: 1 },
+    ct: { id: "ct", nom: "Contre-torpilleur", long: 3, larg: 1 },
+    to: { id: "to", nom: "Torpilleur",        long: 2, larg: 1 },
+    fr: { id: "fr", nom: "Frégate",           long: 3, larg: 1 }, // bonus +1
+    ve: { id: "ve", nom: "Vedette",           long: 2, larg: 1 }, // bonus +2
+  };
+  const BASE = ["pa", "cr", "sm", "ct", "to"];
+  const BONUS = ["fr", "ve"];
 
-  function infoNavire(id) {
-    return FLOTTE.find((n) => n.id === id);
+  /* Réglages d'une partie, toujours « propres » (valeurs sûres).
+     { taille, bonus, competences, colles } */
+  function normaliser(regles) {
+    const r = regles || {};
+    const competences = r.competences === true;
+    let taille = TAILLES.includes(r.taille) ? r.taille : 10;
+    if (competences && !TAILLES_COMPETENCES.includes(taille)) taille = 12; // taille imposée
+    const bonus = Number.isInteger(r.bonus) ? Math.max(0, Math.min(2, r.bonus)) : 0;
+    return { taille, bonus, competences, colles: r.colles !== false };
   }
+
+  // La flotte pour ces réglages : les 5 navires de base + les bonus
+  function flotteDe(regles) {
+    const r = normaliser(regles);
+    return BASE.concat(BONUS.slice(0, r.bonus)).map((id) => NAVIRES[id]);
+  }
+
+  function infoNavire(id) { return NAVIRES[id]; }
+  const casesNavire = (info) => info.long * info.larg;
+  function totalCases(regles) { return flotteDe(regles).reduce((s, n) => s + casesNavire(n), 0); }
 
   // "B7" pour la colonne 1 (B) et la ligne 6 (7e ligne)
-  function nomCase(x, y) {
-    return LETTRES[x] + (y + 1);
-  }
+  function nomCase(x, y) { return LETTRES[x] + (y + 1); }
 
-  // Liste des cases occupées par un navire { id, x, y, h } (h = horizontal)
+  /* Cases occupées par un navire { id, x, y, h } (h = horizontal).
+     (x, y) est le coin en haut à gauche. Horizontal : la longueur va vers la
+     droite et la largeur vers le bas ; vertical : l'inverse. */
   function casesDe(navire) {
-    const taille = infoNavire(navire.id).taille;
+    const info = NAVIRES[navire.id];
     const cases = [];
-    for (let i = 0; i < taille; i++) {
-      cases.push(navire.h ? { x: navire.x + i, y: navire.y } : { x: navire.x, y: navire.y + i });
+    for (let i = 0; i < info.long; i++) {
+      for (let j = 0; j < info.larg; j++) {
+        cases.push(navire.h ? { x: navire.x + i, y: navire.y + j } : { x: navire.x + j, y: navire.y + i });
+      }
     }
     return cases;
   }
 
-  function dansLaGrille(c) {
-    return c.x >= 0 && c.x < TAILLE && c.y >= 0 && c.y < TAILLE;
+  // Encombrement du navire : { l: largeur à l'écran, ht: hauteur à l'écran }
+  function encombrement(navire) {
+    const info = NAVIRES[navire.id];
+    return navire.h ? { l: info.long, ht: info.larg } : { l: info.larg, ht: info.long };
+  }
+
+  function dansLaGrille(c, taille) {
+    return c.x >= 0 && c.x < taille && c.y >= 0 && c.y < taille;
   }
 
   // Décale un navire pour qu'il rentre dans la grille (pratique au doigt).
-  function recadrer(navire) {
-    const taille = infoNavire(navire.id).taille;
-    const maxX = navire.h ? TAILLE - taille : TAILLE - 1;
-    const maxY = navire.h ? TAILLE - 1 : TAILLE - taille;
-    return { ...navire, x: Math.min(Math.max(navire.x, 0), maxX), y: Math.min(Math.max(navire.y, 0), maxY) };
+  function recadrer(navire, taille) {
+    const e = encombrement(navire);
+    return { ...navire, x: Math.min(Math.max(navire.x, 0), taille - e.l), y: Math.min(Math.max(navire.y, 0), taille - e.ht) };
   }
 
   /* Vérifie qu'un navire peut être posé.
@@ -59,22 +92,19 @@
        toucher un autre navire (même en diagonale).
      Renvoie { ok: true } ou { ok: false, raison: "..." }. */
   function placementValide(navires, candidat, regles) {
-    const autorise = !regles || regles.colles !== false;
+    const r = normaliser(regles);
     const cases = casesDe(candidat);
-    if (!cases.every(dansLaGrille)) return { ok: false, raison: "Le navire dépasse de la grille." };
+    if (!cases.every((c) => dansLaGrille(c, r.taille))) return { ok: false, raison: "Le navire dépasse de la grille." };
 
-    const autres = navires.filter((n) => n.id !== candidat.id);
     const occupees = new Set();
-    autres.forEach((n) => casesDe(n).forEach((c) => occupees.add(c.x + "," + c.y)));
+    navires.filter((n) => n.id !== candidat.id).forEach((n) => casesDe(n).forEach((c) => occupees.add(c.x + "," + c.y)));
 
     for (const c of cases) {
       if (occupees.has(c.x + "," + c.y)) return { ok: false, raison: "Il y a déjà un navire ici." };
-      if (!autorise) {
+      if (!r.colles) {
         for (let dx = -1; dx <= 1; dx++) {
           for (let dy = -1; dy <= 1; dy++) {
-            if (occupees.has(c.x + dx + "," + (c.y + dy))) {
-              return { ok: false, raison: "Les navires ne doivent pas se toucher." };
-            }
+            if (occupees.has(c.x + dx + "," + (c.y + dy))) return { ok: false, raison: "Les navires ne doivent pas se toucher." };
           }
         }
       }
@@ -82,25 +112,28 @@
     return { ok: true };
   }
 
-  // La flotte est-elle complète et valide ? (5 navires, chacun bien placé)
+  // La flotte est-elle complète et valide ? (les bons navires, chacun bien placé)
   function flotteValide(navires, regles) {
-    if (!Array.isArray(navires) || navires.length !== FLOTTE.length) return false;
-    const ids = new Set(navires.map((n) => n.id));
-    if (!FLOTTE.every((f) => ids.has(f.id))) return false;
-    return navires.every((n) => placementValide(navires, n, regles).ok);
+    const attendus = flotteDe(regles).map((n) => n.id);
+    if (!Array.isArray(navires) || navires.length !== attendus.length) return false;
+    const ids = new Set(navires.map((n) => n && n.id));
+    if (ids.size !== attendus.length || !attendus.every((id) => ids.has(id))) return false;
+    return navires.every((n) => Number.isInteger(n.x) && Number.isInteger(n.y) && placementValide(navires, n, regles).ok);
   }
 
-  // Placement automatique au hasard (bouton « Aléatoire »)
+  // Placement automatique au hasard (bouton « Aléatoire »), du plus grand au plus petit
   function placementAleatoire(regles, hasard) {
     const rnd = hasard || Math.random;
-    for (let essai = 0; essai < 200; essai++) {
+    const r = normaliser(regles);
+    const flotte = flotteDe(r).slice().sort((a, b) => casesNavire(b) - casesNavire(a));
+    for (let essai = 0; essai < 500; essai++) {
       const navires = [];
       let reussi = true;
-      for (const f of FLOTTE) {
+      for (const f of flotte) {
         let pose = false;
-        for (let t = 0; t < 300 && !pose; t++) {
-          const n = { id: f.id, h: rnd() < 0.5, x: Math.floor(rnd() * TAILLE), y: Math.floor(rnd() * TAILLE) };
-          if (placementValide(navires, n, regles).ok) { navires.push(n); pose = true; }
+        for (let t = 0; t < 400 && !pose; t++) {
+          const n = { id: f.id, h: rnd() < 0.5, x: Math.floor(rnd() * r.taille), y: Math.floor(rnd() * r.taille) };
+          if (placementValide(navires, n, r).ok) { navires.push(n); pose = true; }
         }
         if (!pose) { reussi = false; break; }
       }
@@ -109,35 +142,17 @@
     throw new Error("Placement aléatoire impossible");
   }
 
-  /* Calcule le résultat d'un tir reçu sur MA flotte.
-     tirsRecus = tirs déjà reçus avant celui-ci ([{x,y}, ...]).
-     Renvoie { res: "eau" | "touche" | "coule", navire, cases, fin }. */
-  function resoudreTir(navires, tirsRecus, x, y) {
-    const touche = navires.find((n) => casesDe(n).some((c) => c.x === x && c.y === y));
-    if (!touche) return { res: "eau", fin: false };
-
-    const tous = tirsRecus.concat([{ x, y }]);
-    const estTouchee = (c) => tous.some((t) => t.x === c.x && t.y === c.y);
-    const cases = casesDe(touche);
-    const coule = cases.every(estTouchee);
-    const fin = navires.every((n) => casesDe(n).every(estTouchee));
-    return coule
-      ? { res: "coule", navire: touche.id, cases, fin }
-      : { res: "touche", fin: false };
-  }
-
-  /* Qui doit tirer ? On le déduit simplement du nombre de tirs :
-     le premier joueur tire quand les deux ont tiré autant de fois,
-     l'autre tire quand il a reçu un tir de plus qu'il n'en a envoyé.
-     (Règle officielle : un seul tir par tour, même si on touche.) */
-  function estMonTour(jeSuisPremier, nbEnvoyes, nbRecus) {
-    return jeSuisPremier ? nbEnvoyes === nbRecus : nbRecus === nbEnvoyes + 1;
+  // Ces réglages permettent-ils de placer la flotte ? (8 × 8 + navires séparés + bonus : trop serré)
+  function reglesJouables(regles) {
+    const r = normaliser(regles);
+    if (r.colles) return true;
+    return r.taille >= 10 || r.bonus === 0;
   }
 
   const api = {
-    TAILLE, LETTRES, FLOTTE, TOTAL_CASES,
-    infoNavire, nomCase, casesDe, dansLaGrille, recadrer,
-    placementValide, flotteValide, placementAleatoire, resoudreTir, estMonTour,
+    TAILLES, TAILLES_COMPETENCES, LETTRES, NAVIRES, BASE, BONUS,
+    normaliser, flotteDe, infoNavire, casesNavire, totalCases, nomCase, casesDe, encombrement,
+    dansLaGrille, recadrer, placementValide, flotteValide, placementAleatoire, reglesJouables,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api; // pour les tests

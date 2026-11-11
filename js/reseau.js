@@ -3,7 +3,7 @@
    --------------------------------------------------------------------------
    Comment ça marche, en simple :
    - Le joueur qui crée la partie (l'« hôte ») réserve un nom unique
-     « escadre-v1-CODE » sur le serveur gratuit de PeerJS.
+     « escadre-v2-CODE » sur le serveur gratuit de PeerJS.
    - Son ami tape le CODE : son téléphone demande au serveur où est l'hôte,
      puis les deux téléphones se parlent DIRECTEMENT (technologie WebRTC).
    - Le serveur sert seulement à se trouver : il ne voit pas la partie.
@@ -19,7 +19,7 @@
 (function (racine) {
   "use strict";
 
-  const PREFIXE = "escadre-v1-";
+  const PREFIXE = "escadre-v2-"; // v2 : nouvelles règles (une ancienne version ne peut pas rejoindre)
   const PING_MS = 3000;          // un battement toutes les 3 secondes
   const SILENCE_MAX_MS = 15000;  // sans nouvelles depuis 15 s = connexion morte
   const OUVERTURE_MAX_MS = 15000; // invité : une connexion qui ne s'ouvre pas en 15 s est abandonnée puis relancée
